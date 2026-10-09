@@ -1,0 +1,86 @@
+Design Spec: tpt-symbolic (Layer 3)
+1. Mission & Scope
+Mission: To provide a unified, pure-Rust, exact symbolic mathematics and computer algebra engine. It manipulates mathematical expressions as abstract syntax trees (ASTs), performs algebraic simplification, symbolic differentiation, basic integration, and equation solving, enabling parametric modeling, chemical equation balancing, and formal logic across the TPT ecosystem.
+Scope:
+In Scope: Expression tree construction, canonicalization, pattern-matching rewrite rules, algebraic simplification, symbolic differentiation, basic symbolic integration (power rule, substitution), polynomial and linear equation solving, and boolean logic simplification.
+Out of Scope: Numeric floating-point evaluation (handled by tpt-math), advanced theorem proving (handled by tpt-concord), 3D geometric constraint solving (handled by tpt-math), and arbitrary-precision arithmetic primitives (handled by tpt-mathr).
+2. Core Constraints & Architecture
+Zero C-FFI: 100% Pure Rust. No linking to external CAS libraries.
+no_std + alloc: The AST and rewrite engine must run in no_std environments. This allows parametric CAD constraints (tpt-vertex) to be solved directly in the browser via WASM or on embedded flight computers (tpt-l-riscv).
+Exact Arithmetic: All constants in symbolic expressions must use the exact, arbitrary-precision types from tpt-mathr (e.g., Rational, BigInt). There is absolutely no floating-point math in the core AST.
+Canonical & Deterministic: Expressions must be automatically canonicalized upon creation. a + b and b + a must result in the exact same AST. This guarantees that simplification is deterministic and idempotent.
+The Dependency Map
+Exact Math: tpt-mathr (Provides Rational, BigInt, and Complex types for exact constants).
+Serialization: tpt-uir (Expressions can be serialized to IR for network transport or storage).
+Testing: tpt-testkit (For property-based testing of mathematical identities and golden-file testing of simplifications).
+3. Core Modules & API Design
+Module A: tpt_symbolic::expr (The Expression AST)
+The fundamental data structure. Every mathematical concept is a node in a tree.
+Node Types: Var(String), Const(tpt_mathr::Number), Add(Vec<Expr>), Mul(Vec<Expr>), Pow(Box<Expr>, Box<Expr>), Func(Function, Box<Expr>) (e.g., Sin, Log), Eq(Box<Expr>, Box<Expr>).
+Automatic Canonicalization: When an Add or Mul node is created, its children are automatically sorted (e.g., alphabetically by variable name, then by complexity). Constants are folded immediately (e.g., 2 + x + 3 becomes x + 5).
+Key Struct:
+pub enum Expr {
+    Var(Arc<str>),
+    Const(tpt_mathr::Number), // Exact rational or bigint
+    Add(Vec<Expr>),           // Canonicalized: sorted, constants folded
+    Mul(Vec<Expr>),           // Canonicalized: sorted, constants folded
+    Pow(Box<Expr>, Box<Expr>),
+    Func(SymbolicFunc, Box<Expr>),
+}
+Module B: tpt_symbolic::simplify (The Rewrite Engine)
+The engine that reduces expressions to their simplest form.
+Pattern Matcher: A lightweight engine that matches sub-trees against predefined patterns (e.g., Expr::Mul(x, Expr::Pow(x, n)) matches x * x^2).
+Rule System: A prioritized, terminating set of rewrite rules.
+Algebraic: x * 0 -> 0, x^1 -> x, x^0 -> 1.
+Trigonometric: sin(x)^2 + cos(x)^2 -> 1.
+Logical: A AND (A OR B) -> A (Absorption law).
+Fixed-Point Iteration: The simplifier applies rules repeatedly until the expression stops changing (reaches a fixed point), with a strict depth-limit to prevent infinite loops.
+Module C: tpt_symbolic::calculus (Differentiation & Integration)
+Symbolic manipulation of rates of change and areas.
+Differentiation (diff): Implements the chain rule, product rule, and quotient rule. Because the AST is exact, the derivative of sin(x^2) is exactly 2 * x * cos(x^2), which is then passed through the simplify engine.
+Integration (integrate): Implements basic symbolic integration: the power rule, basic trigonometric integrals, and simple u-substitution. (Note: Full symbolic integration is impossible in the general case; this module handles the 90% use case for physics and engineering).
+Module D: tpt_symbolic::solve (Equation Solvers)
+Finds the roots or solutions to symbolic equations.
+Linear Systems: Solves Ax = b symbolically using exact Gaussian elimination (powered by tpt-mathr).
+Polynomial Roots: Solves linear, quadratic, cubic, and quartic equations exactly using radical formulas.
+Non-Linear / Transcendental: For equations that cannot be solved exactly (e.g., x = cos(x)), it returns a SymbolicRoot object that can be numerically evaluated later via tpt-math using Newton-Raphson.
+4. The Processing Pipeline
+How a parametric CAD constraint is solved in tpt-vertex:
+Constraint Definition: The user defines a constraint: "The distance between Point A (x, y) and Point B (0, 0) must be exactly 5".
+AST Construction: The engine builds the expression: Eq(Pow(x^2 + y^2, 1/2), Const(5)). (Note: 1/2 and 5 are exact tpt-mathr::Rational types).
+Simplification: The engine squares both sides to remove the fractional power, resulting in Eq(x^2 + y^2, 25).
+Solving: The user asks to solve for y. The solver isolates y, subtracts x^2, and takes the square root, yielding y = +/- sqrt(25 - x^2).
+Output: The resulting symbolic expression is returned to the CAD solver, which can now evaluate it numerically (via tpt-math) for any given x without accumulating floating-point drift.
+5. Integration with the TPT Ecosystem
+tpt-vertex (CAD): Uses solve to resolve parametric constraints (e.g., "Line A must be perpendicular to Line B"). Uses diff to calculate tangent vectors for smooth curve blending.
+tpt-chemistry (Computational Chemistry): Uses solve to balance chemical equations. (e.g., finding the exact integer coefficients for a C3H8 + b O2 -> c CO2 + d H2O by solving a system of linear symbolic equations).
+tpt-concord (Compliance/Proofs): Uses the boolean logic subset of simplify to verify that safety constraints and formal specifications are logically sound and non-contradictory.
+tpt-mathr: The backbone of tpt-symbolic. Every constant in the AST is a tpt-mathr type, ensuring that a calculation like 1/3 + 1/3 + 1/3 results in exactly 1, not 0.9999999999999999.
+tpt-math: When a symbolic expression needs to be rendered or evaluated for a physics simulation, tpt-symbolic hands the AST to tpt-math, which compiles it into a fast, numeric evaluation function.
+6. Testing & Quality Strategy
+Mathematical Identity Testing: Using tpt-testkit::property, we generate random symbolic expressions f(x) and g(x). We assert that diff(integrate(f(x))) == f(x) (after simplification), and that expand((x+y)^2) == x^2 + 2xy + y^2.
+Canonicalization Golden Files: We feed thousands of mathematically equivalent but syntactically different expressions into the parser. We assert that they all result in the exact same canonical AST.
+Fuzzing the Simplifier: We use tpt-testkit::fuzz to generate massively nested, chaotic expressions (e.g., sin(cos(tan(x^100)))). We assert that the simplify engine always terminates within a strict time limit and never panics.
+Exactness Verification: We assert that solving x^2 - 2 = 0 returns sqrt(2) as a symbolic root, and that evaluating it to 10,000 decimal places via tpt-mathr matches the known mathematical constant.
+7. Roadmap & Milestones
+Phase 1: AST & Canonicalization (Weeks 1-3)
+Implement the Expr enum and the parser (from string or tpt-uir).
+Implement the canonicalization logic (sorting, constant folding).
+Integrate tpt-mathr for exact constants.
+Milestone: Can parse, store, and perfectly canonicalize mathematical expressions.
+Phase 2: The Simplification Engine (Weeks 4-6)
+Implement the pattern matcher.
+Implement the core algebraic and trigonometric rewrite rules.
+Milestone: Can reduce complex, messy expressions to their simplest exact form.
+Phase 3: Calculus (Weeks 7-9)
+Implement symbolic differentiation (chain, product, quotient rules).
+Implement basic symbolic integration.
+Milestone: Can compute exact derivatives and integrals for physics and engineering.
+Phase 4: Solvers & Ecosystem Integration (Weeks 10-12)
+Implement linear and polynomial equation solvers.
+Integrate with tpt-vertex for parametric CAD constraints.
+Integrate with tpt-chemistry for equation balancing.
+Publish v1.0.0.
+Architect's Note
+The most dangerous trap in building a Computer Algebra System is the "Simplification Rabbit Hole." It is mathematically proven that finding the "simplest" form of an arbitrary expression is an undecidable problem. If you just apply rewrite rules blindly, the engine can easily enter an infinite loop (e.g., x -> x^2 / x -> x).
+To prevent this, tpt-symbolic enforces a strict rule: The rewrite system must be strictly ordered and terminating. We use a concept similar to Knuth-Bendix completion. Rules are prioritized (e.g., "fold constants" is higher priority than "expand trig identities"). Furthermore, the canonicalization step (sorting variables, folding constants) ensures that the engine always makes forward progress toward a unique, normal form, guaranteeing that the simplifier always halts.
