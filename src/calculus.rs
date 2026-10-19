@@ -53,6 +53,12 @@ pub fn gradient(e: &Expr, vars: &[&str]) -> Result<Vec<Expr>, Error> {
 }
 
 /// Derivative of `e` with respect to `var`, simplified.
+/// # Example
+/// ```
+/// use tpt_symbolic::calculus::diff;
+/// use tpt_symbolic::parse::parse;
+/// assert_eq!(diff(&parse("x^3").unwrap(), "x").unwrap().to_string(), "3*x^2");
+/// ```
 pub fn diff(e: &Expr, var: &str) -> Result<Expr, Error> {
     Ok(simplify(&diff_raw(e, var)?))
 }
@@ -163,6 +169,14 @@ fn outer_derivative(f: SymbolicFunc, a: &Expr) -> Expr {
 ///
 /// The antiderivative is verified by differentiating it. If the check fails,
 /// or no rule applies, the result is [`Integral::Unevaluated`].
+/// # Example
+/// ```
+/// use tpt_symbolic::calculus::{integrate, Integral};
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::simplify::simplify;
+/// let f = integrate(&parse("2*x").unwrap(), "x");
+/// assert_eq!(f, Integral::Exact(simplify(&parse("x^2").unwrap())));
+/// ```
 pub fn integrate(e: &Expr, var: &str) -> Integral {
     let integrand = simplify(e);
     // Try the integrand as written, then its expansion, so that `(x^2+1)^2` integrates

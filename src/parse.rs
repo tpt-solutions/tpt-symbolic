@@ -40,6 +40,12 @@ enum Tok {
 }
 
 /// Parses `src` into a canonical expression.
+/// # Example
+/// ```
+/// use tpt_symbolic::parse::parse;
+/// // Products of sums expand, and the parser accepts implicit multiplication.
+/// assert_eq!(parse("2x + 3x").unwrap().to_string(), "5*x");
+/// ```
 pub fn parse(src: &str) -> Result<Expr, Error> {
     let toks = tokenize(src)?;
     if toks.is_empty() {

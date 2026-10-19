@@ -154,6 +154,12 @@ pub const RULES: &[Rule] = &[
 ///
 /// If the limits are hit, the partly simplified result is returned without
 /// signalling it. Use [`simplify_checked`] to find out.
+/// # Example
+/// ```
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::simplify::simplify;
+/// assert_eq!(simplify(&parse("x*x + x*x").unwrap()).to_string(), "2*x^2");
+/// ```
 pub fn simplify(e: &Expr) -> Expr {
     simplify_bounded(e).0
 }
@@ -677,6 +683,12 @@ fn rule_de_morgan(e: &Expr) -> Option<Expr> {
 /// Returns the input unchanged if the expansion would exceed [`MAX_EXPAND_TERMS`].
 /// The output is canonical. Call [`simplify`] afterwards if further reduction
 /// is wanted.
+/// # Example
+/// ```
+/// use tpt_symbolic::simplify::expand;
+/// use tpt_symbolic::parse::parse;
+/// assert_eq!(expand(&parse("(x+1)^2").unwrap()).to_string(), "1 + 2*x + x^2");
+/// ```
 pub fn expand(e: &Expr) -> Expr {
     match e {
         Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E | Expr::I => e.clone(),

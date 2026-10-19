@@ -85,6 +85,13 @@ pub enum SolveResult {
 }
 
 /// Solves `equation` for `var`. A bare expression `f` means `f = 0`.
+/// # Example
+/// ```
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::solve::{solve, SolveResult};
+/// let r = solve(&parse("x^2 - 4 = 0").unwrap(), "x").unwrap();
+/// assert!(matches!(r, SolveResult::Exact(ref v) if v.len() == 2));
+/// ```
 pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
     let f = match equation {
         Expr::Eq(l, r) => simplify(&Expr::difference((**l).clone(), (**r).clone())),
