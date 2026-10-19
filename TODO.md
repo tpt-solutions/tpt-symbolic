@@ -53,15 +53,15 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] **Milestone:** reduce messy expressions to simplest exact form
 
 ## Phase 3 — Calculus (Weeks 7–9)
-- [ ] `diff`: constants, vars, sum, product, quotient, power, chain rule
-- [ ] Derivatives of all `SymbolicFunc` members
-- [ ] Route `diff` output through `simplify` (`d/dx sin(x²)` = `2x·cos(x²)`)
-- [ ] `integrate`: power rule (incl. `x^-1` → log), linear combos, constants
-- [ ] Basic trig / exp integrals
-- [ ] Simple u-substitution detection
-- [ ] Return "unevaluated" result when integration fails (no panic, no wrong answer)
-- [ ] Property tests: `diff(integrate(f)) == f`
-- [ ] **Milestone:** exact derivatives/integrals for common physics/engineering cases
+- [x] `diff`: constants, vars, sum, product, quotient, power, chain rule
+- [x] Derivatives of all `SymbolicFunc` members
+- [x] Route `diff` output through `simplify` (`d/dx sin(x²)` = `2x·cos(x²)`)
+- [x] `integrate`: power rule (incl. `x^-1` → log), linear combos, constants
+- [x] Basic trig / exp integrals
+- [x] Simple u-substitution detection
+- [x] Return "unevaluated" result when integration fails (no panic, no wrong answer)
+- [x] Property tests: `diff(integrate(f)) == f`
+- [x] **Milestone:** exact derivatives/integrals for common physics/engineering cases
 
 ## Phase 4 — Solvers & Integration (Weeks 10–12)
 - [ ] `SolveResult` enum (Exact / Parametric / Numeric(SymbolicRoot) / NoSolution / Infinite)

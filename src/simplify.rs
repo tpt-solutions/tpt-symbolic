@@ -64,6 +64,8 @@ pub const RULES: &[Rule] = &[
     Rule { name: "reflexive-equation", priority: 95, category: Category::Constant, apply: rule_reflexive_equation },
     Rule { name: "parity-of-argument", priority: 90, category: Category::Trigonometric, apply: rule_parity },
     Rule { name: "pythagorean-identity", priority: 85, category: Category::Trigonometric, apply: rule_pythagorean },
+    Rule { name: "even-power-of-abs", priority: 82, category: Category::Algebraic, apply: rule_even_power_of_abs },
+    Rule { name: "tan-definition", priority: 80, category: Category::Trigonometric, apply: rule_tan_definition },
     Rule { name: "inverse-log-exp", priority: 80, category: Category::Exponential, apply: rule_log_exp_inverse },
     Rule { name: "merge-exponentials", priority: 75, category: Category::Exponential, apply: rule_exp_merge },
     Rule { name: "and-absorption", priority: 60, category: Category::Logical, apply: rule_and_absorb },
@@ -216,6 +218,47 @@ fn rule_pythagorean(e: &Expr) -> Option<Expr> {
                     .collect();
                 out.push(replacement);
                 return Some(Expr::sum(out));
+            }
+        }
+    }
+    None
+}
+
+/// `|a|^(2k)` becomes `a^(2k)`, since the absolute value vanishes from even powers.
+fn rule_even_power_of_abs(e: &Expr) -> Option<Expr> {
+    let Expr::Pow(base, exp) = e else { return None };
+    let n = exp.as_number()?;
+    if !n.is_integer() || n.numer() % 2 != 0 {
+        return None;
+    }
+    match &**base {
+        Expr::Func(SymbolicFunc::Abs, a) => Some(Expr::power((**a).clone(), (**exp).clone())),
+        _ => None,
+    }
+}
+
+/// `sin(a) * cos(a)^-1` becomes `tan(a)`.
+fn rule_tan_definition(e: &Expr) -> Option<Expr> {
+    let Expr::Mul(v) = e else { return None };
+    for (i, f) in v.iter().enumerate() {
+        let Expr::Func(SymbolicFunc::Sin, a) = f else { continue };
+        for (j, g) in v.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let Expr::Pow(base, exp) = g else { continue };
+            let is_inv_cos = exp.as_number() == Some(Number::NEG_ONE)
+                && matches!(&**base, Expr::Func(SymbolicFunc::Cos, b) if b == a);
+            if is_inv_cos {
+                let rest: Vec<Expr> = v
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| *k != i && *k != j)
+                    .map(|(_, t)| t.clone())
+                    .collect();
+                let mut out = rest;
+                out.push(Expr::func(SymbolicFunc::Tan, (**a).clone()));
+                return Some(Expr::product(out));
             }
         }
     }
