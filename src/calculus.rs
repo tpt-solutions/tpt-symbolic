@@ -177,6 +177,9 @@ pub fn integrate(e: &Expr, var: &str) -> Integral {
             }
         }
     }
+    if let Some(f) = atan_by_parts(&integrand, var) {
+        return Integral::Exact(simplify(&f));
+    }
     // Rational integrands are integrated by partial fractions. The result is checked term
     // by term at exact points, since its symbolic derivative does not always simplify to
     // the integrand's form.
@@ -516,6 +519,57 @@ fn push_candidate(g: &Expr, var: &str, out: &mut Vec<Expr>) {
     }
 }
 
+/// `∫ x^n atan(x) dx` for a non-negative integer `n`, by parts with `P = x^(n+1)/(n+1)`:
+/// `P atan(x) - ∫ P/(1 + x^2) dx`. The rational integral is found by partial fractions and
+/// checked term by term, and the `atan` term is exact by construction, so the result is not
+/// checked by a symbolic derivative (it would not simplify back to the integrand).
+fn atan_by_parts(e: &Expr, var: &str) -> Option<Expr> {
+    let Expr::Mul(v) = e else { return None };
+    let [Expr::Const(c), rest @ ..] = v.as_slice() else {
+        // Accept the power and atan in either order, with no constant factor.
+        return atan_by_parts_factors(v, var);
+    };
+    let inner = atan_by_parts_factors(rest, var)?;
+    Some(Expr::product(vec![Expr::Const(c.clone()), inner]))
+}
+
+fn atan_by_parts_factors(factors: &[Expr], var: &str) -> Option<Expr> {
+    let (power, atan_arg) = match factors {
+        [a, b] => match (a, b) {
+            (p, Expr::Func(SymbolicFunc::Atan, arg)) | (Expr::Func(SymbolicFunc::Atan, arg), p) => {
+                (p, arg)
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if !matches!(&**atan_arg, Expr::Var(name) if &**name == var) {
+        return None;
+    }
+    let n = match power {
+        Expr::Var(name) if &**name == var => 1,
+        Expr::Pow(base, exp) if matches!(&**base, Expr::Var(name) if &**name == var) => {
+            let k = exp.as_number()?.as_i128()?;
+            if k < 0 {
+                return None;
+            }
+            k + 1
+        }
+        _ => return None,
+    };
+    // P = x^n / n with n = (power + 1), and the rational part -P / (1 + x^2).
+    let x = Expr::var(var);
+    let p = Expr::product(vec![
+        Expr::rational(1, n)?,
+        Expr::power(x.clone(), Expr::int(n)),
+    ]);
+    let den = Expr::sum(vec![Expr::one(), Expr::power(x, Expr::int(2))]);
+    let rational_integrand = Expr::negate(Expr::quotient(p.clone(), den));
+    let rational = rational_antiderivative(&simplify(&rational_integrand), var)?;
+    let atan_term = Expr::product(vec![p, Expr::func(SymbolicFunc::Atan, Expr::var(var))]);
+    Some(Expr::sum(vec![atan_term, rational]))
+}
+
 /// Antiderivative of a rational function of `var`, by partial fractions.
 ///
 /// Polynomial parts are integrated term by term. A term `A/(x + c)` gives `A log|x + c|`,
@@ -781,6 +835,25 @@ mod tests {
                 other => panic!("{src}: expected an exact antiderivative, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn x_power_times_atan_integrates_by_parts() {
+        // ∫ x atan x = x atan x - (1/2) log(1 + x^2).
+        assert_eq!(
+            integrate(&p("x*atan(x)"), "x"),
+            Integral::Exact(simplify(&p("x*atan(x) - 1/2*log(x^2 + 1)")))
+        );
+        // ∫ x^2 atan x = (x^3/3) atan x - x^2/6 + (1/6) log(1 + x^2).
+        assert_eq!(
+            integrate(&p("x^2*atan(x)"), "x"),
+            Integral::Exact(simplify(&p("x^3/3*atan(x) - x^2/6 + 1/6*log(x^2 + 1)")))
+        );
+        // Only the bare argument x is handled.
+        assert!(matches!(
+            integrate(&p("x*atan(2*x)"), "x"),
+            Integral::Unevaluated(_)
+        ));
     }
 
     #[test]

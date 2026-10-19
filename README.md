@@ -110,7 +110,7 @@ digits, and then only the digits you ask for are produced.
   `x^n * g(x)` and for `log(x) * x^n`, `e^(ax) sin/cos(bx)` in closed form, rational
   functions by partial fractions (linear factors and irreducible quadratics; higher
   powers of quadratics and cubic factors are not integrated), and expansion when the
-  direct form fails. `x*atan(x)` is not integrated. Definite integrals are
+  direct form fails. `x^n * atan(x)` by parts, for a non-negative integer `n`. Definite integrals are
   conservative: they are returned only for integrands with no pole, log, abs or
   fractional power, so a divergent integral is never reported as a number.
 - **Limits.** Direct substitution, L'Hôpital for `0/0` quotients, and degree comparison

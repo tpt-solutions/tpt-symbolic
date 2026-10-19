@@ -39,6 +39,7 @@ use semantic versioning once v1.0.0 is released.
 - `simplify::simplify_trace`: the rule applications that produced a result.
 - Imaginary unit `i` (`Expr::I`), `solve_complex` (complex roots of quadratics), and `real_part`, `imag_part` and `conjugate`.
 - Rational integration by partial fractions, with `log|…|` and `atan` terms, checked at exact points.
+- `x^n * atan(x)` by parts, with the rational remainder checked at exact points.
 - Power folding: `c^(-1/2)` for perfect-square constants, and multi-factor quotients in limits and integration.
 - Exact `sin` and `cos` at multiples of pi/12 (the `special-angle` rule).
 - Integration of `e^(ax)·sin(bx)` and `e^(ax)·cos(bx)` in closed form, and integration by parts with the logarithm differentiated (`x^2*log(x)`).
