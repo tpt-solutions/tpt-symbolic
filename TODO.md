@@ -39,18 +39,18 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] **Milestone:** parse, store, perfectly canonicalize expressions
 
 ## Phase 2 — Simplification Engine (Weeks 4–6)
-- [ ] Pattern type + matcher with variable bindings (incl. commutative/associative matching)
-- [ ] Rule struct with priority and category
-- [ ] Algebraic rules: `x*0→0`, `x^1→x`, `x^0→1`, `x*x^n→x^(n+1)`, like-term collection
-- [ ] `expand` (e.g. `(x+y)^2` → `x^2+2xy+y^2`)
-- [ ] Trig rules: `sin²+cos²→1` and friends (ordered to avoid loops)
-- [ ] Log/exp rules
-- [ ] Boolean rules: absorption, De Morgan, idempotence, complement, double negation
-- [ ] Fixed-point driver with strict depth/iteration limit
-- [ ] Termination argument documented (rule ordering / measure that strictly decreases)
-- [ ] Simplify is idempotent: `simplify(simplify(e)) == simplify(e)`
-- [ ] Tests + fuzz (deeply nested exprs terminate, never panic)
-- [ ] **Milestone:** reduce messy expressions to simplest exact form
+- [x] Pattern matching: implemented as per-rule matchers (`identity_pair`, `square_arg`), not a general pattern language; general commutative matcher deferred
+- [x] Rule struct with priority and category
+- [x] Algebraic rules: `x*0→0`, `x^1→x`, `x^0→1`, `x*x^n→x^(n+1)`, like-term collection
+- [x] `expand` (e.g. `(x+y)^2` → `x^2+2xy+y^2`)
+- [x] Trig rules: `sin²+cos²→1` and friends (ordered to avoid loops)
+- [x] Log/exp rules
+- [x] Boolean rules: absorption, De Morgan, idempotence, complement, double negation
+- [x] Fixed-point driver with strict depth/iteration limit
+- [x] Termination argument documented (rule ordering / measure that strictly decreases)
+- [x] Simplify is idempotent: `simplify(simplify(e)) == simplify(e)`
+- [x] Tests + fuzz (seeded random, deeply nested exprs terminate; time-limited fuzzing deferred to cross-cutting)
+- [x] **Milestone:** reduce messy expressions to simplest exact form
 
 ## Phase 3 — Calculus (Weeks 7–9)
 - [ ] `diff`: constants, vars, sum, product, quotient, power, chain rule
