@@ -157,8 +157,13 @@ pub fn simplify_checked(e: &Expr) -> Result<Expr, Error> {
 
 /// The result, and whether it is a fixed point of the rule set.
 fn simplify_bounded(e: &Expr) -> (Expr, bool) {
+    simplify_with_passes(e, MAX_PASSES)
+}
+
+/// [`simplify_bounded`] with an explicit pass limit, so the limit exit can be tested.
+fn simplify_with_passes(e: &Expr, max_passes: usize) -> (Expr, bool) {
     let mut cur = e.clone();
-    for _ in 0..MAX_PASSES {
+    for _ in 0..max_passes {
         let next = pass(&cur, 0);
         if next == cur {
             return (cur, true);
@@ -621,6 +626,18 @@ mod tests {
             deep = Expr::func(SymbolicFunc::Sin, deep);
         }
         let _ = simplify(&deep);
+    }
+
+    #[test]
+    fn pass_limit_exit_is_reported_as_not_converged() {
+        // Zero passes never confirm a fixed point, even for an already simple input.
+        assert_eq!(simplify_with_passes(&p("x"), 0), (p("x"), false));
+        // One pass on a fixed point confirms it, so the limit is not hit.
+        assert_eq!(simplify_with_passes(&p("x"), 1), (p("x"), true));
+        assert_eq!(
+            simplify_with_passes(&p("x + x"), MAX_PASSES),
+            (p("2*x"), true)
+        );
     }
 
     #[test]

@@ -101,16 +101,26 @@ fn parse_binding(binding: &str) -> Result<(String, Number), Failure> {
     Ok((name.to_string(), value))
 }
 
-/// Parses a command-line expression. A parse error is shown under the source with a caret.
+/// Parses a command-line expression. A parse error gives its line and column,
+/// and the line it is on is shown with a caret under the error.
 fn parse_arg(src: &str) -> Result<Expr, Failure> {
     parse(src).map_err(|err| match err {
-        Error::Parse { pos, message } => Failure::Message(format!(
-            "{src}
-{}^ {message}",
-            " ".repeat(pos)
-        )),
+        Error::Parse { pos, message } => Failure::Message(describe_parse_error(src, pos, message)),
         other => Failure::from(other),
     })
+}
+
+/// Formats a parse error at byte offset `pos` in `src`, with a 1-based line and column.
+fn describe_parse_error(src: &str, pos: usize, message: &str) -> String {
+    let pos = pos.min(src.len());
+    let before = &src[..pos];
+    let line_no = before.matches('\n').count() + 1;
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    let line_end = src[pos..].find('\n').map_or(src.len(), |i| pos + i);
+    let line = &src[line_start..line_end];
+    let column = before[line_start..].chars().count() + 1;
+    let caret_pad = " ".repeat(column - 1);
+    format!("parse error at line {line_no}, column {column}: {message}\n{line}\n{caret_pad}^")
 }
 
 fn constant(e: &Expr) -> Result<Number, Failure> {
@@ -144,5 +154,19 @@ fn describe_solve(result: &SolveResult) -> String {
         SolveResult::NoSolution => String::from("no real solution"),
         SolveResult::Infinite => String::from("every value is a solution"),
         _ => String::from("unrecognised solver result"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::describe_parse_error;
+
+    #[test]
+    fn parse_error_reports_line_and_column_on_its_own_line() {
+        let text = describe_parse_error("x +\n2 * )", 8, "unexpected token");
+        assert_eq!(
+            text,
+            "parse error at line 2, column 5: unexpected token\n2 * )\n    ^"
+        );
     }
 }
