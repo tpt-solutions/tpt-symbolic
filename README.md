@@ -62,3 +62,8 @@ cargo test --all-features
 ```
 
 The design is in `spec.txt` and the work plan in `TODO.md`.
+
+## Licence
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT licence](LICENSE-MIT), at your option.

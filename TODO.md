@@ -94,4 +94,4 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 
 ## Still needed from you
 - [ ] GitHub URLs for tpt-mathr, tpt-uir, tpt-testkit (and tpt-vertex / tpt-chemistry / tpt-concord / tpt-math)
-- [ ] Licence used by the other TPT repos
+- [x] Licence used by the other TPT repos (MIT OR Apache-2.0; LICENSE-MIT and LICENSE-APACHE added)
