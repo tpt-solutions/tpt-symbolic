@@ -9,15 +9,15 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - Solver output: **enum result** — `Exact(Vec<Expr>)`, `Parametric`, `Numeric(SymbolicRoot)`, `NoSolution`, `Infinite` (recommended, not yet confirmed by you).
 
 ## Phase 0 — Project setup
-- [ ] Create Cargo crate `tpt-symbolic` (`#![no_std]` + `extern crate alloc`)
-- [ ] Feature flags: `std` (off by default), `stub-mathr`, `uir`, `testkit`
-- [ ] Module skeleton: `expr`, `simplify`, `calculus`, `solve`
-- [ ] Error type (no_std-friendly, no `std::error::Error` unless `std`)
-- [ ] Confirm builds for `wasm32-unknown-unknown` and a bare-metal target (e.g. `riscv32imac-unknown-none-elf`)
+- [x] Create Cargo crate `tpt-symbolic` (`#![no_std]` + `extern crate alloc`)
+- [x] Feature flags: `std` (off by default), `stub-mathr`, `uir`, `testkit`
+- [x] Module skeleton: `expr`, `simplify`, `calculus`, `solve`
+- [x] Error type (no_std-friendly, no `std::error::Error` unless `std`)
+- [x] Confirm builds for `wasm32-unknown-unknown` and a bare-metal target (e.g. `riscv32imac-unknown-none-elf`)
 - [ ] Enforce: zero C-FFI, zero floats in core AST (CI grep/clippy lint for `f32`/`f64`)
 
 ## Phase 0b — Dependency stubs
-- [ ] `mathr` shim: `Number` (BigInt / Rational / Complex), arithmetic, `Ord`, `Hash`, `Display`
+- [x] `mathr` shim: `Number` (BigInt / Rational / Complex), arithmetic, `Ord`, `Hash`, `Display`
 - [ ] Define the trait surface we need from real tpt-mathr so the swap is mechanical
 - [ ] `uir` shim: serialize/deserialize trait for `Expr`
 - [ ] `testkit` shim: property-test + golden-file helpers (or temporary use of a public crate in dev-deps only)

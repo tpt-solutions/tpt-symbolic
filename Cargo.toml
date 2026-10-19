@@ -1,0 +1,20 @@
+[package]
+name = "tpt-symbolic"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Exact, pure-Rust symbolic mathematics engine (no_std + alloc)"
+readme = "README.md"
+
+[features]
+default = ["stub-mathr"]
+# Enables the standard library (std::error::Error impls only; the core stays no_std).
+std = []
+# Uses the local exact-number shim in place of tpt-mathr. Required until the real crate is wired in.
+stub-mathr = []
+# Text-based IR codec (stand-in for tpt-uir).
+uir = []
+# Deterministic random-expression generator for property and fuzz tests.
+testkit = []
+
+[dependencies]
