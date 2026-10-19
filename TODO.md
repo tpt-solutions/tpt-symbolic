@@ -70,7 +70,7 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [ ] Solvers: linear, quadratic, cubic, quartic (radical forms) — linear and quadratic done; cubic and quartic done when they have rational roots (rational root theorem and deflation); irrational cubic/quartic radicals still pending
 - [x] Equation isolation for single variable (`x²+y²=25` for `y` → `±sqrt(25-x²)`)
 - [x] `SymbolicRoot` for transcendental equations (Newton–Raphson hand-off to tpt-math)
-- [x] Test: `x²-2=0` → `sqrt(2)` (10,000-digit check vs tpt-mathr pending the real crate)
+- [x] Test: `x²-2=0` → `sqrt(2)`; 10,000-digit check via exact integer sqrt (`bigint::tests::sqrt2_to_ten_thousand_decimal_places`), not tpt-mathr
 - [ ] (deferred) tpt-vertex integration: CAD constraint pipeline example (distance = 5)
 - [ ] (deferred) tpt-chemistry integration: balance `C3H8 + O2 → CO2 + H2O` as integer nullspace — the nullspace core is done and tested; wiring into tpt-chemistry is blocked on that repo
 - [ ] (deferred) tpt-concord integration: boolean satisfiability/contradiction check API

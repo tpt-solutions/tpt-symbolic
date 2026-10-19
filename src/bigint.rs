@@ -113,27 +113,9 @@ fn bit_len(a: &[u64]) -> u64 {
     }
 }
 
-fn bit(a: &[u64], i: u64) -> u64 {
-    let limb = (i / 64) as usize;
-    match a.get(limb) {
-        Some(&x) => (x >> (i % 64)) & 1,
-        None => 0,
-    }
-}
-
-fn shl1_or(r: &mut Vec<u64>, low: u64) {
-    let mut carry = low;
-    for limb in r.iter_mut() {
-        let next = *limb >> 63;
-        *limb = (*limb << 1) | carry;
-        carry = next;
-    }
-    if carry != 0 {
-        r.push(carry);
-    }
-}
-
 /// Quotient and remainder of magnitudes. `b` must be non-empty.
+///
+/// Knuth, TAOCP vol. 2, Algorithm D, in base 2^64.
 fn mag_divrem(a: &[u64], b: &[u64]) -> (Vec<u64>, Vec<u64>) {
     if mag_cmp(a, b) == Ordering::Less {
         return (Vec::new(), a.to_vec());
@@ -143,17 +125,56 @@ fn mag_divrem(a: &[u64], b: &[u64]) -> (Vec<u64>, Vec<u64>) {
         let rem = if r == 0 { Vec::new() } else { vec![r] };
         return (q, rem);
     }
-    let bits = bit_len(a);
-    let mut q = vec![0u64; a.len()];
-    let mut r: Vec<u64> = Vec::new();
-    for i in (0..bits).rev() {
-        shl1_or(&mut r, bit(a, i));
-        if mag_cmp(&r, b) != Ordering::Less {
-            r = mag_sub(&r, b);
-            q[(i / 64) as usize] |= 1 << (i % 64);
+    let base: u128 = 1 << 64;
+    // Normalize so the divisor's top limb has its high bit set.
+    let s = b[b.len() - 1].leading_zeros();
+    let v = mag_shl(b, s as u64);
+    let n = v.len();
+    let mut u = mag_shl(a, s as u64);
+    u.resize(a.len() + 1, 0);
+    let m = a.len() - n;
+    let mut q = vec![0u64; m + 1];
+    let v_top = v[n - 1] as u128;
+    let v_next = v[n - 2] as u128;
+    for j in (0..=m).rev() {
+        // Estimate the next quotient limb from the top two limbs.
+        let num = ((u[j + n] as u128) << 64) | u[j + n - 1] as u128;
+        let mut qhat = num / v_top;
+        let mut rhat = num % v_top;
+        while qhat >= base || qhat * v_next > ((rhat << 64) | u[j + n - 2] as u128) {
+            qhat -= 1;
+            rhat += v_top;
+            if rhat >= base {
+                break;
+            }
         }
+        // Multiply and subtract qhat * v from u[j..=j+n].
+        let mut borrow: i128 = 0;
+        let mut carry: u128 = 0;
+        for i in 0..n {
+            let p = qhat * v[i] as u128 + carry;
+            carry = p >> 64;
+            let t = u[i + j] as i128 - (p as u64) as i128 - borrow;
+            u[i + j] = t as u64;
+            borrow = i128::from(t < 0);
+        }
+        let t = u[j + n] as i128 - carry as i128 - borrow;
+        u[j + n] = t as u64;
+        if t < 0 {
+            // The estimate was one too large: add v back.
+            qhat -= 1;
+            let mut c: u128 = 0;
+            for i in 0..n {
+                let sum = u[i + j] as u128 + v[i] as u128 + c;
+                u[i + j] = sum as u64;
+                c = sum >> 64;
+            }
+            u[j + n] = u[j + n].wrapping_add(c as u64);
+        }
+        q[j] = qhat as u64;
     }
-    (trim(q), r)
+    let rem = mag_shr(&trim(u[..n].to_vec()), s as u64);
+    (trim(q), rem)
 }
 
 fn trailing_zeros(a: &[u64]) -> u64 {
@@ -346,6 +367,26 @@ impl BigInt {
     pub fn gcd(&self, o: &BigInt) -> BigInt {
         BigInt::make(false, mag_gcd(&self.mag, &o.mag))
     }
+
+    /// Floor of the square root. `None` for negative values.
+    pub fn isqrt(&self) -> Option<BigInt> {
+        if self.neg {
+            return None;
+        }
+        if self.is_zero() {
+            return Some(BigInt::zero());
+        }
+        // Newton iteration from above: starts at 2^ceil(bits/2) >= sqrt(self).
+        let mut x = BigInt::make(false, mag_shl(&[1], bit_len(&self.mag).div_ceil(2)));
+        loop {
+            let (q, _) = self.divrem(&x)?;
+            let y = BigInt::make(false, mag_shr(&x.add(&q).mag, 1));
+            if y >= x {
+                return Some(x);
+            }
+            x = y;
+        }
+    }
 }
 
 impl Ord for BigInt {
@@ -477,5 +518,71 @@ mod tests {
         assert!(BigInt::from_i128(-5) < BigInt::from_i128(-4));
         assert!(BigInt::from_i128(-1) < BigInt::zero());
         assert!(big("1000000000000000000000000000000000000000000") > BigInt::from_i128(i128::MAX));
+    }
+
+    /// Deterministic pseudo-random integer with about `limbs` 64-bit limbs.
+    fn pseudo_random(seed: &mut u64, limbs: usize) -> BigInt {
+        let mut mag = Vec::with_capacity(limbs);
+        for _ in 0..limbs {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 7;
+            *seed ^= *seed << 17;
+            mag.push(*seed);
+        }
+        BigInt::make(false, trim(mag))
+    }
+
+    #[test]
+    fn division_identity_holds_on_random_multi_limb_operands() {
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        for round in 0..200 {
+            let a = pseudo_random(&mut seed, 1 + round % 17);
+            let b = pseudo_random(&mut seed, 1 + round % 9);
+            if b.is_zero() {
+                continue;
+            }
+            let (q, r) = a.divrem(&b).unwrap();
+            assert!(r < b, "remainder not reduced in round {round}");
+            assert_eq!(q.mul(&b).add(&r), a, "q*b + r != a in round {round}");
+        }
+    }
+
+    /// Integer square root of 2 · 10^(2k) gives floor(sqrt(2) · 10^k).
+    fn sqrt2_digits(k: u32) -> BigInt {
+        let mut ten_pow = BigInt::one();
+        let ten_19 = BigInt::from_i128(10_000_000_000_000_000_000);
+        for _ in 0..(2 * k / 19) {
+            ten_pow = ten_pow.mul(&ten_19);
+        }
+        for _ in 0..(2 * k % 19) {
+            ten_pow = ten_pow.mul(&BigInt::from_i128(10));
+        }
+        BigInt::from_i128(2).mul(&ten_pow).isqrt().unwrap()
+    }
+
+    #[test]
+    fn sqrt2_to_ten_thousand_decimal_places() {
+        let k = 10_000;
+        let root = sqrt2_digits(k);
+        let digits = root.to_string();
+        // floor(sqrt(2) * 10^k) has k + 1 digits.
+        assert_eq!(digits.len(), k as usize + 1);
+        // Known leading digits of sqrt(2).
+        assert!(digits.starts_with("14142135623730950488016887242096980785696718753769"), "{}", &digits[..60]);
+        // Exact bounds: root^2 <= 2*10^(2k) < (root+1)^2, checked in integers.
+        let target = BigInt::from_i128(2).mul(&sqrt2_digits_square_base(k));
+        let next = root.add(&BigInt::one());
+        assert!(root.mul(&root) <= target);
+        assert!(next.mul(&next) > target);
+    }
+
+    /// 10^(2k) as a BigInt, the scale for the bound checks.
+    fn sqrt2_digits_square_base(k: u32) -> BigInt {
+        let mut acc = BigInt::one();
+        let ten = BigInt::from_i128(10);
+        for _ in 0..(2 * k) {
+            acc = acc.mul(&ten);
+        }
+        acc
     }
 }
