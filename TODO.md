@@ -18,7 +18,7 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 
 ## Phase 0b — Dependency stubs
 - [x] `mathr` shim: `Number` (BigInt / Rational / Complex), arithmetic, `Ord`, `Hash`, `Display`
-- [ ] Define the trait surface we need from real tpt-mathr so the swap is mechanical
+- [x] Define the trait surface we need from real tpt-mathr so the swap is mechanical (`mathr::ExactNumber`, implemented by `Number`)
 - [x] `uir` shim: serialize/deserialize trait for `Expr`
 - [x] `testkit` shim: property-test + golden-file helpers (or temporary use of a public crate in dev-deps only)
 
@@ -80,8 +80,8 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 
 ## Cross-cutting quality
 - [x] Property tests for identities (via testkit)
-- [ ] Fuzz targets for parser and simplifier with time limits — seeded random tests done; time-limited fuzzing pending
-- [ ] Benchmarks on large expressions
+- [x] Fuzz targets for parser and simplifier with time limits (`tests/fuzz.rs`, 2000 deep inputs each, 5 s per-case budget)
+- [x] Benchmarks on large expressions (`examples/bench.rs`, plain timing harness; not statistical)
 - [x] `no_std` CI matrix (native, wasm32, riscv)
 - [x] Rustdoc for every public item; README with pipeline example
 

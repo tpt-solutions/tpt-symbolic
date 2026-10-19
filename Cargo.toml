@@ -18,3 +18,7 @@ uir = []
 testkit = []
 
 [dependencies]
+
+[[test]]
+name = "fuzz"
+required-features = ["testkit"]

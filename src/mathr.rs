@@ -207,3 +207,89 @@ mod tests {
         assert_eq!(format!("{}", q(4, 2)), "2");
     }
 }
+
+/// The arithmetic surface the crate needs from an exact number type.
+///
+/// `Number` implements it. The real `tpt-mathr` types should implement it
+/// too, so that switching over is a change of type alias and not a rewrite.
+pub trait ExactNumber: Sized + Copy + Eq + Ord + fmt::Display {
+    /// Exact zero.
+    fn zero() -> Self;
+    /// Exact one.
+    fn one() -> Self;
+    /// Embeds an integer.
+    fn from_i128(n: i128) -> Self;
+    /// `true` if the value is exactly zero.
+    fn is_zero(&self) -> bool;
+    /// `true` if the value is strictly negative.
+    fn is_negative(&self) -> bool;
+    /// Exact sum, or `None` on overflow.
+    fn checked_add(self, o: Self) -> Option<Self>;
+    /// Exact difference, or `None` on overflow.
+    fn checked_sub(self, o: Self) -> Option<Self>;
+    /// Exact product, or `None` on overflow.
+    fn checked_mul(self, o: Self) -> Option<Self>;
+    /// Exact quotient, or `None` on division by zero or overflow.
+    fn checked_div(self, o: Self) -> Option<Self>;
+    /// Exact negation, or `None` on overflow.
+    fn checked_neg(self) -> Option<Self>;
+    /// Exact reciprocal, or `None` for zero.
+    fn checked_recip(self) -> Option<Self>;
+    /// Exact integer power, or `None` on overflow or a negative power of zero.
+    fn checked_pow(self, exp: i64) -> Option<Self>;
+}
+
+impl ExactNumber for Number {
+    fn zero() -> Self {
+        Number::ZERO
+    }
+    fn one() -> Self {
+        Number::ONE
+    }
+    fn from_i128(n: i128) -> Self {
+        Number::from_int(n)
+    }
+    fn is_zero(&self) -> bool {
+        Number::is_zero(self)
+    }
+    fn is_negative(&self) -> bool {
+        Number::is_negative(self)
+    }
+    fn checked_add(self, o: Self) -> Option<Self> {
+        Number::checked_add(self, o)
+    }
+    fn checked_sub(self, o: Self) -> Option<Self> {
+        Number::checked_sub(self, o)
+    }
+    fn checked_mul(self, o: Self) -> Option<Self> {
+        Number::checked_mul(self, o)
+    }
+    fn checked_div(self, o: Self) -> Option<Self> {
+        Number::checked_div(self, o)
+    }
+    fn checked_neg(self) -> Option<Self> {
+        Number::checked_neg(self)
+    }
+    fn checked_recip(self) -> Option<Self> {
+        Number::checked_recip(self)
+    }
+    fn checked_pow(self, exp: i64) -> Option<Self> {
+        Number::checked_pow(self, exp)
+    }
+}
+
+#[cfg(test)]
+mod trait_tests {
+    use super::{ExactNumber, Number};
+
+    /// Generic code written against the trait only.
+    fn third_times_three<N: ExactNumber>() -> Option<N> {
+        let three = N::from_i128(3);
+        N::one().checked_div(three)?.checked_mul(three)
+    }
+
+    #[test]
+    fn trait_surface_is_exact() {
+        assert_eq!(third_times_three::<Number>(), Some(Number::ONE));
+    }
+}
