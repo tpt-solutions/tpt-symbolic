@@ -147,7 +147,8 @@ has a test or was checked by hand.
 
 ### Tier 4 — Usability and automation
 - [ ] Parse errors with line/column, caret snippet and "did you mean"
-  - [x] `tpt-sym` shows the source with a caret under the error
+  - [x] `tpt-sym` shows the line and column, and the source line with a caret under the error (tested for multi-line input)
+  - [ ] "Did you mean" hint for unknown names — needs the parser to report the bad identifier, so it touches `Error::Parse` and is not done
   - [ ] The library `Error::Parse` is still a byte offset plus a message. Line and column, and the "did you mean" hint, are not done
   - [ ] `Unsupported` messages are still generic
 - [x] `tpt-sym` command-line tool (`src/bin/tpt-sym.rs`). A REPL is not built
@@ -159,7 +160,7 @@ has a test or was checked by hand.
   - [ ] `repository` and `documentation` in `Cargo.toml` — need the URL
 - [x] Fuzz generator widened: `testkit::random_expr_wide` uses all 12 functions, negative and fractional exponents, a third variable, and larger constants. The original `random_expr` is unchanged so existing seeds still give the same expressions. Booleans and deeper nesting are not in the wide generator yet
 - [x] `BigInt` differential tests against `i128` and a division identity check beyond `i128`
-- [ ] Tests for the `MAX_PASSES` exit. The `MAX_DEPTH` exit is covered through `simplify_checked`
+- [x] Tests for the `MAX_PASSES` exit (`pass_limit_exit_is_reported_as_not_converged`, via a pass-limit parameter on the driver). The `MAX_DEPTH` exit is covered through `simplify_checked`
 
 ### Tier 5 — Adoption
 - [x] `examples/`: quickstart, calculus, solve_equations, linear_systems, balance_chemistry, exact_numbers, parse_and_print (all run in CI through `cargo test`). `custom_rules` was dropped because the rule table is a `const`, so the example would describe an API that does not exist
@@ -168,4 +169,5 @@ has a test or was checked by hand.
 - [x] Starter `template/` project (builds and runs; uses a path dependency until a release exists). No `no_std` variant yet
 - [ ] docs.rs polish: the README is the crate overview. Per-function examples exist for `eval`, `latex` and the cookbook, but not for every public item
 - [x] CONTRIBUTING.md, with a walkthrough for adding a simplification rule
-- [ ] Resolve the open decisions above (solver result enum, sibling-crate URLs)
+- [x] Open decisions resolved by the recommended option: solver result enum is done (`SolveResult`). Partial-root variant, `Parametric` split, `pi`/`e` constants and `serde` stay deferred, so no public API change and no new dependency (see the review decisions above)
+- [ ] Sibling-crate URLs (`tpt-mathr`, `tpt-uir`, `tpt-testkit`, integration crates) — needs the user; no recommendation can supply them
