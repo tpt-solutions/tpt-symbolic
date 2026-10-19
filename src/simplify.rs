@@ -105,6 +105,18 @@ pub const RULES: &[Rule] = &[
         apply: rule_tanh_definition,
     },
     Rule {
+        name: "imaginary-unit",
+        priority: 98,
+        category: Category::Algebraic,
+        apply: rule_imaginary_unit,
+    },
+    Rule {
+        name: "special-angle",
+        priority: 99,
+        category: Category::Trigonometric,
+        apply: rule_special_angle,
+    },
+    Rule {
         name: "inverse-log-exp",
         priority: 80,
         category: Category::Exponential,
@@ -168,21 +180,50 @@ fn simplify_bounded(e: &Expr) -> (Expr, bool) {
 
 /// [`simplify_bounded`] with an explicit pass limit, so the limit exit can be tested.
 fn simplify_with_passes(e: &Expr, max_passes: usize) -> (Expr, bool) {
+    let (out, converged, _) = run_passes(e, max_passes, false);
+    (out, converged)
+}
+
+/// One rule application: which rule fired, and the node before and after it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Step {
+    /// Name from the [`RULES`] table.
+    pub rule: &'static str,
+    /// The node the rule matched, after its children were simplified.
+    pub before: Expr,
+    /// The node the rule produced.
+    pub after: Expr,
+}
+
+/// Simplifies `e` like [`simplify`], and also returns every rule application in order.
+///
+/// Only rules from [`RULES`] are recorded. Canonical construction (flattening,
+/// constant folding, like-term collection) happens in the smart constructors and is not
+/// listed, so the steps explain the rule-based part of the result.
+pub fn simplify_trace(e: &Expr) -> (Expr, Vec<Step>) {
+    let (out, _, steps) = run_passes(e, MAX_PASSES, true);
+    (out, steps)
+}
+
+/// Runs passes until a fixed point or `max_passes`. Returns the result, whether it converged,
+/// and the rule applications when `trace` is set.
+fn run_passes(e: &Expr, max_passes: usize, trace: bool) -> (Expr, bool, Vec<Step>) {
     let mut cur = e.clone();
+    let mut steps = if trace { Some(Vec::new()) } else { None };
     for _ in 0..max_passes {
-        let next = pass(&cur, 0);
+        let next = pass(&cur, 0, &mut steps);
         if next == cur {
-            return (cur, true);
+            return (cur, true, steps.unwrap_or_default());
         }
         cur = next;
     }
-    (cur, false)
+    (cur, false, steps.unwrap_or_default())
 }
 
 /// Number of levels in the tree, counting a leaf as 1.
 fn tree_depth(e: &Expr) -> usize {
     match e {
-        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E => 1,
+        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E | Expr::I => 1,
         Expr::Add(v) | Expr::Mul(v) | Expr::And(v) | Expr::Or(v) => {
             1 + v.iter().map(tree_depth).max().unwrap_or(0)
         }
@@ -191,30 +232,51 @@ fn tree_depth(e: &Expr) -> usize {
     }
 }
 
-fn pass(e: &Expr, depth: usize) -> Expr {
+fn pass(e: &Expr, depth: usize, steps: &mut Option<Vec<Step>>) -> Expr {
     if depth > MAX_DEPTH {
         return e.clone();
     }
     let d = depth + 1;
     let rebuilt = match e {
-        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E => return e.clone(),
-        Expr::Add(v) => Expr::sum(v.iter().map(|t| pass(t, d)).collect()),
-        Expr::Mul(v) => Expr::product(v.iter().map(|t| pass(t, d)).collect()),
-        Expr::Pow(b, x) => Expr::power(pass(b, d), pass(x, d)),
-        Expr::Func(f, a) => Expr::func(*f, pass(a, d)),
-        Expr::Eq(a, b) => Expr::equation(pass(a, d), pass(b, d)),
-        Expr::And(v) => Expr::and_all(v.iter().map(|t| pass(t, d)).collect()),
-        Expr::Or(v) => Expr::or_all(v.iter().map(|t| pass(t, d)).collect()),
-        Expr::Not(a) => Expr::logical_not(pass(a, d)),
+        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E | Expr::I => {
+            return e.clone()
+        }
+        Expr::Add(v) => Expr::sum(v.iter().map(|t| pass(t, d, steps)).collect()),
+        Expr::Mul(v) => Expr::product(v.iter().map(|t| pass(t, d, steps)).collect()),
+        Expr::Pow(b, x) => {
+            let base = pass(b, d, steps);
+            Expr::power(base, pass(x, d, steps))
+        }
+        Expr::Func(f, a) => Expr::func(*f, pass(a, d, steps)),
+        Expr::Eq(a, b) => {
+            let lhs = pass(a, d, steps);
+            Expr::equation(lhs, pass(b, d, steps))
+        }
+        Expr::And(v) => Expr::and_all(v.iter().map(|t| pass(t, d, steps)).collect()),
+        Expr::Or(v) => Expr::or_all(v.iter().map(|t| pass(t, d, steps)).collect()),
+        Expr::Not(a) => Expr::logical_not(pass(a, d, steps)),
     };
-    apply_rules(&rebuilt).unwrap_or(rebuilt)
+    match apply_rules(&rebuilt) {
+        Some((rule, out)) => {
+            if let Some(log) = steps {
+                log.push(Step {
+                    rule,
+                    before: rebuilt,
+                    after: out.clone(),
+                });
+            }
+            out
+        }
+        None => rebuilt,
+    }
 }
 
-fn apply_rules(e: &Expr) -> Option<Expr> {
+/// The first rule that changes `e`, with its name.
+fn apply_rules(e: &Expr) -> Option<(&'static str, Expr)> {
     for rule in RULES {
         if let Some(out) = (rule.apply)(e) {
             if out != *e {
-                return Some(out);
+                return Some((rule.name, out));
             }
         }
     }
@@ -352,6 +414,100 @@ fn rule_tan_definition(e: &Expr) -> Option<Expr> {
 }
 
 /// `sinh(a) * cosh(a)^-1` becomes `tanh(a)`.
+/// Reduces powers and products of the imaginary unit with `I^2 = -1`.
+///
+/// `I^n` for an integer `n` becomes `1`, `I`, `-1` or `-I` by `n mod 4`. A product with
+/// `k` copies of `I` becomes `(-1)^(k/2)` times `I` when `k` is odd, and `(-1)^(k/2)` otherwise.
+fn rule_imaginary_unit(e: &Expr) -> Option<Expr> {
+    match e {
+        Expr::Pow(base, exp) if **base == Expr::I => {
+            let n = exp.as_number()?;
+            if !n.is_integer() {
+                return None;
+            }
+            let k = n.as_i128()?.rem_euclid(4);
+            Some(match k {
+                0 => Expr::one(),
+                1 => Expr::I,
+                2 => Expr::int(-1),
+                _ => Expr::negate(Expr::I),
+            })
+        }
+        Expr::Mul(v) => {
+            let copies = v.iter().filter(|f| **f == Expr::I).count();
+            if copies < 2 {
+                return None;
+            }
+            let mut factors: Vec<Expr> = v.iter().filter(|f| **f != Expr::I).cloned().collect();
+            if (copies / 2) % 2 == 1 {
+                factors.push(Expr::int(-1));
+            }
+            if copies % 2 == 1 {
+                factors.push(Expr::I);
+            }
+            Some(Expr::product(factors))
+        }
+        _ => None,
+    }
+}
+
+/// Exact `sin` and `cos` at rational multiples of `pi` with denominator dividing 12.
+///
+/// Other angles are left alone. `tan` is not included.
+fn rule_special_angle(e: &Expr) -> Option<Expr> {
+    let Expr::Func(f, arg) = e else { return None };
+    if !matches!(f, SymbolicFunc::Sin | SymbolicFunc::Cos) {
+        return None;
+    }
+    let q = pi_multiple(arg)?.checked_mul(&Number::from_int(12))?;
+    if !q.is_integer() {
+        return None;
+    }
+    // Index in twelfths of a turn, mod 24. cos(x) = sin(x + pi/2), and pi/2 is 6 twelfths.
+    let mut k = q.as_i128()?.rem_euclid(24);
+    if *f == SymbolicFunc::Cos {
+        k = (k + 6).rem_euclid(24);
+    }
+    sin_at_twelfths(k)
+}
+
+/// The rational `q` with `arg = q*pi`, when `arg` has that form.
+fn pi_multiple(arg: &Expr) -> Option<Number> {
+    match arg {
+        Expr::Pi => Some(Number::one()),
+        Expr::Const(c) if c.is_zero() => Some(Number::zero()),
+        Expr::Mul(v) => match v.as_slice() {
+            [Expr::Const(c), Expr::Pi] => Some(c.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `sin(k*pi/12)` for `k` in `0..24`, where the value is exact.
+fn sin_at_twelfths(k: i128) -> Option<Expr> {
+    let half = || Expr::rational(1, 2).unwrap_or_else(Expr::one);
+    // sqrt(2)/2 and sqrt(3)/2, as canonical products.
+    let root = |n: i128| {
+        Expr::product(vec![
+            Expr::rational(1, 2).unwrap_or_else(Expr::one),
+            Expr::power(Expr::int(n), Expr::rational(1, 2).unwrap_or_else(Expr::one)),
+        ])
+    };
+    Some(match k {
+        0 | 12 => Expr::zero(),
+        2 | 10 => half(),
+        3 | 9 => root(2),
+        4 | 8 => root(3),
+        6 => Expr::one(),
+        14 | 22 => Expr::negate(half()),
+        15 | 21 => Expr::negate(root(2)),
+        16 | 20 => Expr::negate(root(3)),
+        18 => Expr::negate(Expr::one()),
+        _ => return None,
+    })
+}
+
 fn rule_tanh_definition(e: &Expr) -> Option<Expr> {
     ratio_definition(
         e,
@@ -514,7 +670,7 @@ fn rule_de_morgan(e: &Expr) -> Option<Expr> {
 /// is wanted.
 pub fn expand(e: &Expr) -> Expr {
     match e {
-        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E => e.clone(),
+        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E | Expr::I => e.clone(),
         Expr::Add(v) => Expr::sum(v.iter().map(expand).collect()),
         Expr::Mul(v) => expand_product(e, v),
         Expr::Pow(b, x) => {
@@ -593,6 +749,51 @@ mod tests {
         assert_eq!(s("cos(0)"), Expr::one());
         assert_eq!(s("log(1)"), Expr::zero());
         assert_eq!(s("abs(-3)"), Expr::int(3));
+    }
+
+    #[test]
+    fn trace_gives_the_same_result_and_names_the_rules() {
+        let e = p("sin(x)^2 + cos(x)^2");
+        let (out, steps) = simplify_trace(&e);
+        assert_eq!(out, simplify(&e));
+        assert!(steps.iter().any(|st| st.rule == "pythagorean-identity"));
+        let e = p("sin(pi/6)");
+        let (out, steps) = simplify_trace(&e);
+        assert_eq!(out, simplify(&e));
+        assert!(steps.iter().any(|st| st.rule == "special-angle"));
+        // Every recorded step changes something.
+        assert!(steps.iter().all(|st| st.before != st.after));
+    }
+
+    #[test]
+    fn imaginary_unit_reduces() {
+        assert_eq!(simplify(&Expr::power(Expr::I, Expr::int(2))), Expr::int(-1));
+        assert_eq!(
+            simplify(&Expr::power(Expr::I, Expr::int(3))),
+            Expr::negate(Expr::I)
+        );
+        assert_eq!(
+            simplify(&Expr::power(Expr::I, Expr::int(-1))),
+            Expr::negate(Expr::I)
+        );
+        assert_eq!(
+            simplify(&Expr::product(vec![Expr::I, Expr::I, Expr::var("x")])),
+            simplify(&p("-x"))
+        );
+        assert_eq!(simplify(&p("i*i")), simplify(&p("-1")));
+        assert_eq!(simplify(&p("i^4")), simplify(&p("1")));
+    }
+
+    #[test]
+    fn exact_values_at_twelfths_of_pi() {
+        assert_eq!(simplify(&s("sin(pi/6)")), simplify(&s("1/2")));
+        assert_eq!(simplify(&s("cos(pi)")), simplify(&s("-1")));
+        assert_eq!(simplify(&s("sin(-pi/2)")), simplify(&s("-1")));
+        assert_eq!(simplify(&s("cos(0)")), simplify(&s("1")));
+        assert_eq!(simplify(&s("cos(pi/4)^2")), simplify(&s("1/2")));
+        // pi/5 is not a multiple of pi/12, so it stays symbolic.
+        assert_eq!(simplify(&s("sin(pi/5)")), simplify(&s("sin(pi/5)")));
+        assert!(matches!(simplify(&s("sin(pi/5)")), Expr::Func(..)));
     }
 
     #[test]

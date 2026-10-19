@@ -12,20 +12,30 @@ extern crate std;
 #[doc = include_str!("../docs/cookbook.md")]
 pub mod cookbook {}
 
+pub mod apart;
+pub mod assume;
 pub mod bigint;
 pub mod calculus;
+pub mod certificate;
 pub mod error;
 pub mod eval;
 pub mod expr;
+pub mod factor;
+pub mod interval;
 pub mod latex;
+pub mod limits;
 pub mod mathr;
+pub mod matrix;
 mod ops;
 pub mod parse;
+pub mod program;
 pub mod simplify;
 pub mod solve;
 
 #[cfg(feature = "uir")]
 pub mod uir;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;

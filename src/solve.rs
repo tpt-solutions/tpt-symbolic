@@ -10,8 +10,10 @@
 //! Real solutions only. A quadratic with a negative constant discriminant
 //! gives [`SolveResult::NoSolution`].
 //!
-//! Not implemented yet: cubic and quartic radical formulas. Those degrees
-//! currently return [`SolveResult::Numeric`].
+//! Cubics with one real root and quartics whose resolvent cubic has a positive
+//! rational root are solved in radicals (Cardano and Ferrari). A cubic with three real
+//! roots, and other degrees, return [`SolveResult::Numeric`]. Use
+//! [`SymbolicRoot::isolate`] for rigorous brackets on those.
 //!
 //! Symbolic leading coefficients are assumed non-zero, and symbolic
 //! discriminants are assumed non-negative. Both assumptions are stated here
@@ -19,7 +21,7 @@
 
 use crate::bigint::BigInt;
 use crate::error::Error;
-use crate::expr::Expr;
+use crate::expr::{Expr, SymbolicFunc};
 use crate::mathr::Number;
 use crate::simplify::simplify;
 use alloc::sync::Arc;
@@ -37,6 +39,21 @@ pub struct SymbolicRoot {
     pub expr: Expr,
     /// The unknown.
     pub var: Arc<str>,
+}
+
+impl SymbolicRoot {
+    /// Rigorous brackets for the roots in `[lo, hi]`: intervals that together contain every
+    /// root there, found by interval bisection. See [`crate::interval::isolate_roots`].
+    ///
+    /// Works for polynomials and rational functions. Other expressions return an error.
+    pub fn isolate(
+        &self,
+        lo: &Number,
+        hi: &Number,
+        depth: u32,
+    ) -> Result<Vec<crate::interval::Interval>, Error> {
+        crate::interval::isolate_roots(&self.expr, &self.var, lo, hi, depth)
+    }
 }
 
 /// Outcome of solving an equation.
@@ -89,7 +106,10 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
         });
     }
     let Some(coeffs) = poly_coeffs(&f, var) else {
-        return Ok(numeric(f, var));
+        return Ok(match invert_once(&f, var) {
+            Some(roots) => exact_roots(roots),
+            None => numeric(f, var),
+        });
     };
     let mut coeffs: Vec<Expr> = coeffs.iter().map(simplify).collect();
     while coeffs
@@ -111,6 +131,68 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
             _ => numeric(f, var),
         },
     })
+}
+
+/// Like [`solve`], but a quadratic with a negative discriminant gets its complex roots
+/// `(-b ± i·sqrt(-disc)) / (2a)` instead of [`SolveResult::NoSolution`].
+///
+/// Other equations are answered exactly as [`solve`] answers them. Complex roots of
+/// higher-degree polynomials are not found.
+pub fn solve_complex(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
+    let result = solve(equation, var)?;
+    if !matches!(result, SolveResult::NoSolution) {
+        return Ok(result);
+    }
+    let f = match equation {
+        Expr::Eq(l, r) => simplify(&Expr::difference((**l).clone(), (**r).clone())),
+        other => simplify(other),
+    };
+    let Some(coeffs) = poly_coeffs(&f, var) else {
+        return Ok(result);
+    };
+    let mut coeffs: Vec<Expr> = coeffs.iter().map(simplify).collect();
+    while coeffs
+        .last()
+        .is_some_and(|c| c.as_number().is_some_and(|n| n.is_zero()))
+    {
+        coeffs.pop();
+    }
+    match coeffs.as_slice() {
+        [c, b, a] => Ok(complex_quadratic(a, b, c)),
+        _ => Ok(result),
+    }
+}
+
+/// Roots of `a*y^2 + b*y + c = 0` over the complex numbers.
+/// A numeric negative discriminant gives `i·sqrt(-disc)`. A symbolic one uses the real formula.
+fn complex_quadratic(a: &Expr, b: &Expr, c: &Expr) -> SolveResult {
+    let four_ac = Expr::product(vec![Expr::int(4), a.clone(), c.clone()]);
+    let disc = simplify(&Expr::difference(
+        Expr::power(b.clone(), Expr::int(2)),
+        four_ac,
+    ));
+    let root = match disc.as_number() {
+        // sqrt(d) for d < 0 is i * sqrt(-d).
+        Some(d) if d.is_negative() => match d.checked_neg() {
+            Some(positive) => Expr::product(vec![
+                Expr::I,
+                Expr::power(Expr::Const(positive), Expr::Const(half())),
+            ]),
+            None => return SolveResult::NoSolution,
+        },
+        _ => Expr::power(disc, Expr::Const(half())),
+    };
+    let denom = Expr::product(vec![Expr::int(2), a.clone()]);
+    let neg_b = Expr::negate(b.clone());
+    let plus = simplify(&Expr::quotient(
+        Expr::sum(vec![neg_b.clone(), root.clone()]),
+        denom.clone(),
+    ));
+    let minus = simplify(&Expr::quotient(
+        Expr::sum(vec![neg_b, Expr::negate(root)]),
+        denom,
+    ));
+    exact_roots(vec![plus, minus])
 }
 
 fn numeric(expr: Expr, var: &str) -> SolveResult {
@@ -201,7 +283,11 @@ fn rational_roots(low: &[Number]) -> Option<Split> {
             // No rational root. A pure power or biquadratic equation still has
             // exact real roots, so use those; anything else is a partial result.
             return Some(
-                match pure_power_roots(&poly).or_else(|| biquadratic_roots(&poly)) {
+                match pure_power_roots(&poly)
+                    .or_else(|| biquadratic_roots(&poly))
+                    .or_else(|| cardano_roots(&poly))
+                    .or_else(|| ferrari_roots(&poly))
+                {
                     Some(more) => {
                         roots.extend(more);
                         Split::Exact(roots)
@@ -332,6 +418,243 @@ fn biquadratic_roots(poly: &[Number]) -> Option<Vec<Expr>> {
     Some(roots)
 }
 
+/// Solves `k * F(u) + c0 = 0` by inverting one layer of `F`, when `F` is `exp`, `log`, a
+/// reciprocal or an integer power and `u` is the variable's only occurrence.
+///
+/// The inverted equation `u = w` is then solved with [`solve`]. Returns `None` when the
+/// shape does not match, or when that inner solve is not exact.
+fn invert_once(f: &Expr, var: &str) -> Option<Vec<Expr>> {
+    let Expr::Add(terms) = f else { return None };
+    let [first, second] = terms.as_slice() else {
+        return None;
+    };
+    let (constant, varying) = match (first.contains_var(var), second.contains_var(var)) {
+        (false, true) => (first, second),
+        (true, false) => (second, first),
+        _ => return None,
+    };
+    let c0 = constant.as_number()?;
+    // The varying term is k * F(u) with a constant k.
+    let (k, layer) = match varying {
+        Expr::Mul(v) => match v.as_slice() {
+            [Expr::Const(k), inner] => (k.clone(), inner),
+            _ => return None,
+        },
+        other => (Number::one(), other),
+    };
+    if k.is_zero() {
+        return None;
+    }
+    // F(u) = -c0 / k is the inner equation.
+    let target = c0.checked_neg()?.checked_div(&k)?;
+    let candidates: Vec<Expr> = match layer {
+        Expr::Func(SymbolicFunc::Exp, u) => {
+            if !target.is_negative() && !target.is_zero() {
+                vec![Expr::sum(vec![
+                    (**u).clone(),
+                    Expr::negate(Expr::func(SymbolicFunc::Log, Expr::Const(target))),
+                ])]
+            } else {
+                return Some(Vec::new());
+            }
+        }
+        Expr::Func(SymbolicFunc::Log, u) => vec![Expr::sum(vec![
+            (**u).clone(),
+            Expr::negate(Expr::func(SymbolicFunc::Exp, Expr::Const(target))),
+        ])],
+        Expr::Pow(u, n) => {
+            let n = n.as_number()?.as_i128()?;
+            power_equation_candidates(u, n, &target)?
+        }
+        _ => return None,
+    };
+    let mut out = Vec::new();
+    for equation in candidates {
+        match solve(&equation, var).ok()? {
+            SolveResult::Exact(v) => out.extend(v),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// Real roots of a cubic `a y^3 + b y^2 + c y + d = 0` (highest degree first, `a != 0`) in
+/// Cardano form, when they are expressible with real radicals.
+///
+/// Depresses the cubic to `t^3 + p t + q = 0` with `y = t - b/(3a)`. When the discriminant
+/// `q^2/4 + p^3/27` is non-negative, the real roots are `cbrt(u) + cbrt(v)` with
+/// `u, v = -q/2 ± sqrt(disc)`. Each real cube root is taken with the sign of its radicand,
+/// which is decided exactly. A negative discriminant (three real roots, the casus
+/// irreducibilis) needs complex intermediates, so `None` is returned for it.
+fn cardano_roots(poly: &[Number]) -> Option<Vec<Expr>> {
+    let [lead, b, c, d] = poly else { return None };
+    if lead.is_zero() {
+        return None;
+    }
+    let three = Number::from_int(3);
+    let b = b.checked_div(lead)?;
+    let c = c.checked_div(lead)?;
+    let d = d.checked_div(lead)?;
+    let b_over_3 = b.checked_div(&three)?;
+    let p = c.checked_sub(&b.checked_mul(&b)?.checked_div(&three)?)?;
+    // q = 2b^3/27 - bc/3 + d
+    let q = Number::from_int(2)
+        .checked_mul(&b.checked_mul(&b)?.checked_mul(&b)?)?
+        .checked_div(&Number::from_int(27))?
+        .checked_sub(&b.checked_mul(&c)?.checked_div(&three)?)?
+        .checked_add(&d)?;
+    let half_q_neg = q.checked_div(&Number::from_int(2))?.checked_neg()?;
+    let p_third = p.checked_div(&three)?;
+    let disc = half_q_neg
+        .checked_mul(&half_q_neg)?
+        .checked_add(&p_third.checked_mul(&p_third)?.checked_mul(&p_third)?)?;
+    if disc.is_negative() {
+        return None;
+    }
+    let shift = Expr::Const(b_over_3.checked_neg()?);
+    let ys: Vec<Expr> = if disc.is_zero() {
+        // A double root and a simple root.
+        let single = cube_root_real(Expr::Const(half_q_neg.clone()), half_q_neg.clone());
+        vec![
+            Expr::product(vec![Expr::int(2), single.clone()]),
+            Expr::negate(single),
+        ]
+    } else {
+        let sqrt_disc = Expr::power(Expr::Const(disc.clone()), Expr::Const(half()));
+        let u = simplify(&Expr::sum(vec![
+            Expr::Const(half_q_neg.clone()),
+            sqrt_disc.clone(),
+        ]));
+        let v = simplify(&Expr::sum(vec![
+            Expr::Const(half_q_neg.clone()),
+            Expr::negate(sqrt_disc),
+        ]));
+        let u_sign = sign_of_sum_with_root(&half_q_neg, &disc, 1)?;
+        let v_sign = sign_of_sum_with_root(&half_q_neg, &disc, -1)?;
+        vec![Expr::sum(vec![
+            cube_root_signed(u, u_sign),
+            cube_root_signed(v, v_sign),
+        ])]
+    };
+    Some(
+        ys.into_iter()
+            .map(|y| simplify(&Expr::sum(vec![y, shift.clone()])))
+            .collect(),
+    )
+}
+
+/// The real cube root of `w`, where `w` is known to have the sign of `w_value`.
+fn cube_root_real(w: Expr, w_value: Number) -> Expr {
+    cube_root_signed(w, s_sign(&w_value))
+}
+
+/// The real cube root of `w` given its sign: `cbrt(w)` if `sign >= 0`, else `-cbrt(-w)`.
+fn cube_root_signed(w: Expr, sign: i32) -> Expr {
+    let third = Expr::Const(Number::new(1, 3).unwrap_or_else(Number::one));
+    if sign >= 0 {
+        simplify(&Expr::power(w, third))
+    } else {
+        simplify(&Expr::negate(Expr::power(Expr::negate(w), third)))
+    }
+}
+
+/// Real roots of a monic-up-to-scale quartic `a y^4 + b y^3 + c y^2 + d y + e = 0` (highest
+/// degree first), by Ferrari's method, when its resolvent cubic has a positive rational root.
+///
+/// Depresses to `t^4 + p t^2 + q t + r`. With `m > 0` a root of the resolvent
+/// `8m^3 + 8p m^2 + (2p^2 - 8r) m - q^2 = 0`, the quartic factors over the reals into
+/// `(t^2 + s t + k_+)(t^2 - s t + k_-)` where `s = sqrt(2m)`. Each quadratic factor is
+/// solved with the quadratic formula, and its discriminant sign is decided exactly.
+///
+/// Returns `None` when the resolvent has no positive rational root. Then the roots would
+/// need nested radicals whose signs this module does not decide.
+fn ferrari_roots(poly: &[Number]) -> Option<Vec<Expr>> {
+    let [lead, b, c, d, e] = poly else {
+        return None;
+    };
+    if lead.is_zero() {
+        return None;
+    }
+    let four = Number::from_int(4);
+    let a = b.checked_div(lead)?;
+    let bb = c.checked_div(lead)?;
+    let cc = d.checked_div(lead)?;
+    let dd = e.checked_div(lead)?;
+    let a2 = a.checked_mul(&a)?;
+    let a3 = a2.checked_mul(&a)?;
+    let a4 = a3.checked_mul(&a)?;
+    let eighth = Number::new(1, 8)?;
+    let p = bb.checked_sub(&a2.checked_mul(&Number::from_int(3))?.checked_mul(&eighth)?)?;
+    let q = cc
+        .checked_sub(&a.checked_mul(&bb)?.checked_div(&Number::from_int(2))?)?
+        .checked_add(&a3.checked_mul(&eighth)?)?;
+    let r = dd
+        .checked_sub(&a.checked_mul(&cc)?.checked_div(&four)?)?
+        .checked_add(&a2.checked_mul(&bb)?.checked_div(&Number::from_int(16))?)?
+        .checked_sub(
+            &a4.checked_mul(&Number::from_int(3))?
+                .checked_div(&Number::from_int(256))?,
+        )?;
+    // Resolvent, lowest degree first: -q^2 + (2p^2 - 8r) m + 8p m^2 + 8 m^3.
+    let p2 = p.checked_mul(&p)?;
+    let resolvent = [
+        q.checked_mul(&q)?.checked_neg()?,
+        p2.checked_mul(&Number::from_int(2))?
+            .checked_sub(&r.checked_mul(&Number::from_int(8))?)?,
+        p.checked_mul(&Number::from_int(8))?,
+        Number::from_int(8),
+    ];
+    let m = match rational_roots(&resolvent)? {
+        Split::Exact(v) | Split::Partial { roots: v, .. } => v,
+    }
+    .into_iter()
+    .filter_map(|e| e.as_number())
+    .find(|m| !m.is_negative() && !m.is_zero())?;
+
+    let two_m = m.checked_mul(&Number::from_int(2))?;
+    let s = Expr::power(Expr::Const(two_m.clone()), Expr::Const(half()));
+    let shift = Expr::Const(a.checked_div(&four)?.checked_neg()?);
+    // Discriminant of t^2 + sigma*s*t + k: -2m - 2p + sigma * s q / m, where s q / m has
+    // square 2 q^2 / m and sign of q. Its sign is decided on the form s0 + sigma*qs*sqrt(d).
+    let s0 = two_m
+        .checked_neg()?
+        .checked_sub(&p.checked_mul(&Number::from_int(2))?)?;
+    let d = q
+        .checked_mul(&q)?
+        .checked_mul(&Number::from_int(2))?
+        .checked_div(&m)?;
+    let q_sign = s_sign(&q);
+    let mut roots = Vec::new();
+    for sigma in [1i128, -1] {
+        let sign = sign_of_sum_with_root(
+            &s0,
+            &d,
+            sigma * i128::from(if q_sign == 0 { 1 } else { q_sign }),
+        )?;
+        if sign < 0 {
+            continue;
+        }
+        let sigma_expr = Expr::int(sigma);
+        let coupling = Expr::product(vec![
+            Expr::Const(q.checked_div(&m)?),
+            s.clone(),
+            sigma_expr.clone(),
+        ]);
+        let disc = simplify(&Expr::sum(vec![Expr::Const(s0.clone()), coupling]));
+        let sqrt_disc = Expr::power(disc, Expr::Const(half()));
+        let minus_b = Expr::product(vec![Expr::int(-sigma), s.clone()]);
+        for sign_root in [1i128, -1] {
+            let root_numer = Expr::sum(vec![
+                minus_b.clone(),
+                Expr::product(vec![Expr::int(sign_root), sqrt_disc.clone()]),
+            ]);
+            let y = Expr::quotient(root_numer, Expr::int(2));
+            roots.push(simplify(&Expr::sum(vec![y, shift.clone()])));
+        }
+    }
+    Some(roots)
+}
+
 /// Sign (-1, 0 or 1) of `s + sigma*sqrt(d)` for rational `s`, `d >= 0` and `sigma` = ±1.
 fn sign_of_sum_with_root(s: &Number, d: &Number, sigma: i128) -> Option<i32> {
     if d.is_zero() || s.is_zero() {
@@ -371,7 +694,7 @@ fn s_sign(s: &Number) -> i32 {
 }
 
 /// A rational root of `poly` (highest degree first, non-zero constant term), if one is found.
-fn find_rational_root(poly: &[Number]) -> Option<Number> {
+pub(crate) fn find_rational_root(poly: &[Number]) -> Option<Number> {
     let ints = integer_scale(poly)?;
     let constant = ints.last()?.abs().to_u128()?;
     let leading = ints.first()?.abs().to_u128()?;
@@ -414,7 +737,7 @@ fn integer_scale(poly: &[Number]) -> Option<Vec<BigInt>> {
         .collect()
 }
 
-fn divisors(n: u128) -> Option<Vec<u128>> {
+pub(crate) fn divisors(n: u128) -> Option<Vec<u128>> {
     if n == 0 {
         return None;
     }
@@ -436,7 +759,7 @@ fn divisors(n: u128) -> Option<Vec<u128>> {
 }
 
 /// Horner evaluation: whether `poly` (highest degree first) vanishes at `r`.
-fn eval_is_zero(poly: &[Number], r: &Number) -> Option<bool> {
+pub(crate) fn eval_is_zero(poly: &[Number], r: &Number) -> Option<bool> {
     let mut acc = Number::zero();
     for c in poly {
         acc = acc.checked_mul(r)?.checked_add(c)?;
@@ -446,7 +769,7 @@ fn eval_is_zero(poly: &[Number], r: &Number) -> Option<bool> {
 
 /// Quotient of `poly` (highest degree first) by `x - r`. The remainder is dropped,
 /// so `r` must be a root.
-fn divide_by_linear(poly: &[Number], r: &Number) -> Option<Vec<Number>> {
+pub(crate) fn divide_by_linear(poly: &[Number], r: &Number) -> Option<Vec<Number>> {
     let mut out = Vec::with_capacity(poly.len() - 1);
     let mut acc = Number::zero();
     for (i, c) in poly.iter().enumerate() {
@@ -662,6 +985,58 @@ pub fn primitive_integer_vector(v: &[Number]) -> Result<Vec<i128>, Error> {
         .collect()
 }
 
+/// Candidates for `u^n = target` as equations `u - w = 0`, for an integer `n != 0`.
+///
+/// For negative `n` this is `u^|n| = 1/target`. The real roots are taken: for odd `|n|`
+/// there is one, for even `|n|` there are two when the base is non-negative, and none
+/// when it is negative.
+fn power_equation_candidates(u: &Expr, n: i128, target: &Number) -> Option<Vec<Expr>> {
+    if n == 0 {
+        return None;
+    }
+    let m = n.unsigned_abs();
+    let base = if n < 0 {
+        if target.is_zero() {
+            // 1/u^m = 0 has no solution.
+            return Some(Vec::new());
+        }
+        Number::one().checked_div(target)?
+    } else {
+        target.clone()
+    };
+    if base.is_zero() {
+        return Some(vec![u.clone()]);
+    }
+    let m_i = i128::try_from(m).ok()?;
+    if base.is_negative() && m.is_multiple_of(2) {
+        return Some(Vec::new());
+    }
+    let magnitude = if base.is_negative() {
+        base.checked_neg()?
+    } else {
+        base.clone()
+    };
+    let root = simplify(&Expr::power(
+        Expr::Const(magnitude),
+        Expr::Const(Number::new(1, m_i)?),
+    ));
+    // The real root of a negative base for odd m carries the minus sign.
+    let signed = |w: Expr| {
+        if base.is_negative() {
+            Expr::negate(w)
+        } else {
+            w
+        }
+    };
+    let mut out = vec![Expr::sum(vec![
+        u.clone(),
+        Expr::negate(signed(root.clone())),
+    ])];
+    if m.is_multiple_of(2) {
+        out.push(Expr::sum(vec![u.clone(), Expr::negate(Expr::negate(root))]));
+    }
+    Some(out)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -749,21 +1124,22 @@ mod tests {
             SolveResult::Numeric(root) => assert_eq!(&*root.var, "x"),
             other => panic!("expected numeric hand-off, got {other:?}"),
         }
-        // A cubic with no rational root and no pure-power shape stays numeric.
+        // x^3 + x + 1 has one real root, which Cardano gives exactly.
         assert!(matches!(
             solve(&p("x^3 + x + 1 = 0"), "x").unwrap(),
-            SolveResult::Numeric(_)
+            SolveResult::Exact(v) if v.len() == 1
         ));
     }
 
     #[test]
     fn partial_roots_keep_the_exact_part() {
-        // (x - 1)(x^3 + x + 1): x = 1 is exact; the cubic factor is handed off.
-        match solve(&p("x^4 - x^3 + x^2 - 1 = 0"), "x").unwrap() {
+        // (x - 1)(x^3 - 3x + 1): x = 1 is exact. The cubic has three real roots, which need
+        // complex intermediates for Cardano, so it is handed off.
+        match solve(&p("x^4 - x^3 - 3*x^2 + 4*x - 1 = 0"), "x").unwrap() {
             SolveResult::Partial { exact, rest } => {
                 assert_eq!(exact, vec![Expr::int(1)]);
                 assert_eq!(rest.var.as_ref(), "x");
-                assert_eq!(rest.expr, simplify(&p("x^3 + x + 1")));
+                assert_eq!(rest.expr, simplify(&p("x^3 - 3*x + 1")));
             }
             other => panic!("expected a partial result, got {other:?}"),
         }
@@ -771,6 +1147,122 @@ mod tests {
         assert!(matches!(
             solve(&p("x^5 + x + 1 = 0"), "x").unwrap(),
             SolveResult::Numeric(_)
+        ));
+    }
+
+    #[test]
+    fn one_layer_of_exp_log_reciprocal_and_powers_is_inverted() {
+        // exp(x) = 5 gives x = log(5).
+        assert_eq!(
+            solve(&p("exp(x) = 5"), "x").unwrap(),
+            SolveResult::Exact(vec![simplify(&p("log(5)"))])
+        );
+        // 2 exp(3x) = 4 gives x = log(2)/3.
+        assert_eq!(
+            solve(&p("2*exp(3*x) = 4"), "x").unwrap(),
+            SolveResult::Exact(vec![simplify(&p("log(2)/3"))])
+        );
+        // log(x) = 2 gives x = exp(2).
+        assert_eq!(
+            solve(&p("log(x) = 2"), "x").unwrap(),
+            SolveResult::Exact(vec![simplify(&p("exp(2)"))])
+        );
+        // 1/(x - 1) = 3 gives x = 4/3.
+        assert_eq!(
+            solve(&p("1/(x-1) = 3"), "x").unwrap(),
+            SolveResult::Exact(vec![Expr::rational(4, 3).unwrap()])
+        );
+        // (x + 1)^3 = 8 gives x = 1 (odd power, one real root).
+        assert_eq!(
+            solve(&p("(x+1)^3 = 8"), "x").unwrap(),
+            SolveResult::Exact(vec![Expr::int(1)])
+        );
+        // exp(x) = -1 has no real solution.
+        assert_eq!(
+            solve(&p("exp(x) = -1"), "x").unwrap(),
+            SolveResult::NoSolution
+        );
+        // An even power of a negative target has no real solution: (x+1)^2 is polynomial,
+        // so use a reciprocal power instead: 1/(x-1)^2 = -1.
+        assert_eq!(
+            solve(&p("1/(x-1)^2 = -1"), "x").unwrap(),
+            SolveResult::NoSolution
+        );
+    }
+
+    #[test]
+    fn numeric_hand_off_can_be_isolated_rigorously() {
+        // x^3 - 3x + 1 has three real roots, near -1.88, 0.35 and 1.53.
+        let SolveResult::Numeric(root) = solve(&p("x^3 - 3*x + 1 = 0"), "x").unwrap() else {
+            panic!("expected a numeric hand-off");
+        };
+        let brackets = root
+            .isolate(&Number::from_int(-3), &Number::from_int(3), 20)
+            .unwrap();
+        // Every root lies in some bracket, so there are at least three. Brackets that touch
+        // a root at the finest resolution cannot be excluded, so a few more are allowed.
+        assert!(
+            (3..=6).contains(&brackets.len()),
+            "{} brackets",
+            brackets.len()
+        );
+        let finest = Number::from_int(6)
+            .checked_div(&Number::from_int(1 << 20))
+            .unwrap();
+        for b in &brackets {
+            assert!(
+                b.hi.checked_sub(&b.lo).unwrap().cmp_value(&finest) != core::cmp::Ordering::Greater
+            );
+        }
+        for pair in brackets.windows(2) {
+            assert!(pair[0].hi.cmp_value(&pair[1].lo) != core::cmp::Ordering::Greater);
+        }
+    }
+
+    #[test]
+    fn cubic_with_one_real_root_is_exact_by_cardano() {
+        // x^3 + x - 1 has one real root, cbrt(...) + cbrt(...) with sqrt(93)/18 inside.
+        match solve(&p("x^3 + x - 1 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => assert_eq!(v.len(), 1),
+            other => panic!("expected an exact root, got {other:?}"),
+        }
+        // Three real roots (casus irreducibilis) need complex intermediates: stays numeric.
+        assert!(matches!(
+            solve(&p("x^3 - 3*x + 1 = 0"), "x").unwrap(),
+            SolveResult::Numeric(_)
+        ));
+    }
+
+    #[test]
+    fn quartic_with_rational_resolvent_root_is_exact_by_ferrari() {
+        // (x^2 - 2)(x^2 - 2x - 2) = x^4 - 2x^3 - 4x^2 + 4x + 4: roots ±sqrt(2), 1 ± sqrt(3).
+        let mut expected: Vec<Expr> = ["sqrt(2)", "-sqrt(2)", "1 + sqrt(3)", "1 - sqrt(3)"]
+            .iter()
+            .map(|s| simplify(&p(s)))
+            .collect();
+        expected.sort();
+        match solve(&p("x^4 - 2*x^3 - 4*x^2 + 4*x + 4 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => assert_eq!(v, expected),
+            other => panic!("expected exact roots, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn complex_roots_of_quadratics_with_negative_discriminant() {
+        // x^2 + 1 = 0 has roots ±i; x^2 + 2x + 2 = 0 has roots -1 ± i.
+        let circle = solve_complex(&p("x^2 + 1 = 0"), "x").unwrap();
+        assert_eq!(
+            circle,
+            SolveResult::Exact(vec![simplify(&Expr::negate(Expr::I)), simplify(&Expr::I)])
+        );
+        match solve_complex(&p("x^2 + 2*x + 2 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => assert_eq!(v.len(), 2),
+            other => panic!("expected complex roots, got {other:?}"),
+        }
+        // Real roots are unchanged.
+        assert!(matches!(
+            solve_complex(&p("x^2 - 4 = 0"), "x").unwrap(),
+            SolveResult::Exact(v) if v.len() == 2
         ));
     }
 

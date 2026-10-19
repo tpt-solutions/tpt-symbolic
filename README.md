@@ -44,6 +44,12 @@ cargo run -- solve "x^2 - 2 = 0" x      # -2^(1/2), 2^(1/2)
 cargo run -- eval "x^2 + 1" x=1/2       # 5/4
 cargo run -- decimal "1/3" 6            # 0.333333
 cargo run -- latex "x/2"                # \frac{x}{2}
+cargo run -- factor "x^4 - 5*x^2 + 6" x # (-2 + x^2) * (-3 + x^2)
+cargo run -- apart "1" "x^2 - 1" x      # -1/2*(x + 1)^(-1) + 1/2*(x - 1)^(-1)
+cargo run -- limit "sin(x)/x" x 0       # 1
+cargo run -- taylor "exp(x)" x 0 3      # x + 1 + 1/2*x^2 + 1/6*x^3
+cargo run -- definite "x^2" x 0 1       # 1/3
+cargo run -- trace "sin(x)^2 + cos(x)^2" # pythagorean-identity: ... -> 1, then result: 1
 ```
 
 ## Syntax
@@ -87,13 +93,31 @@ digits, and then only the digits you ask for are produced.
 - **Real numbers only.** Discriminants and radicands are assumed non-negative
   when they are symbolic. `x*x^-1` simplifies to `1` without checking `x != 0`.
 - **Products of sums expand.** `(x + 1)/(x - 1)` is canonicalised to
-  `x*(x - 1)^(-1) + (x - 1)^(-1)`. Factored forms are not kept, and there is no `factor`.
-- **Solver scope.** Exact answers exist for degree 1 and 2, for polynomials
-  with rational roots, and for `x^n = c`. A polynomial that has some rational
-  roots and a leftover irreducible factor is reported as numeric as a whole.
-- **Integration scope.** Power rule, linear arguments, basic trig and
-  exponential forms, `1/x`, `asin`, `acos`, `atan`, and simple u-substitution.
-  Integration by parts, partial fractions and definite integrals are not implemented.
+  `x*(x - 1)^(-1) + (x - 1)^(-1)`. The constructors always expand, so use
+  `factor` to see factors. `Factorization::describe` prints them separately.
+- **Constants.** `pi`, `e` and `i` are constants, not variables. `eval` refuses them,
+  because they have no exact rational value.
+- **Solver scope.** Exact answers exist for degree 1 and 2 (including complex roots
+  through `solve_complex`), for polynomials with rational roots, for `x^n = c`, for
+  biquadratics, for cubics with one real root (Cardano), and for quartics whose resolvent
+  cubic has a positive rational root (Ferrari). Three real roots of a cubic need complex
+  intermediates and are reported as numeric. Other leftovers use `SymbolicRoot::isolate`
+  for rigorous brackets.
+- **Factoring.** Complete over the rationals for degree up to 4, and marked incomplete
+  beyond that. Partial fractions need a completely factored denominator.
+- **Integration scope.** Power rule, linear arguments, basic trig and exponential forms,
+  `1/x`, `asin`, `acos`, `atan`, simple u-substitution, integration by parts for
+  `x^n * g(x)`, and expansion when the direct form fails. Definite integrals are
+  conservative: they are returned only for integrands with no pole, log, abs or
+  fractional power, so a divergent integral is never reported as a number.
+- **Limits.** Direct substitution, L'Hôpital for `0/0` quotients, and degree comparison
+  at infinity. Other limits are unevaluated, never guessed.
+- **Assumptions.** The default simplifier combines `x*x^-1` into `1` (that is,
+  it assumes `x != 0`). `simplify_assuming` applies `abs` and `log` rules only for
+  variables declared positive.
+- **Matrices.** Exact for numeric entries at any size. Symbolic determinants and
+  inverses are limited to size 7. A symbolic inverse divides by the determinant, and
+  the determinant is assumed non-zero.
 - **Nesting limit.** The parser accepts up to 128 levels of nesting and reports
   deeper input as an error.
 
@@ -148,14 +172,16 @@ match integrate(&parse("x*cos(x^2)").unwrap(), "x") {
 
 ## Status
 
-Implemented: canonical AST, parser and printer, prioritised rewrite engine,
-`expand`, `diff` (including higher derivatives and gradients), verified
-`integrate`, exact evaluation and truncated decimals, LaTeX output, exact linear
-systems and nullspace, and the solvers described above.
+Implemented: canonical AST, parser and printer, prioritised rewrite engine with a
+rule trace, `expand`, `diff` (higher derivatives and gradients), verified and
+definite `integrate`, exact evaluation and truncated decimals, LaTeX output, exact
+linear systems and nullspace, the solvers described above, factoring, partial fractions,
+symbolic matrices, Taylor series and limits, complex numbers (the unit `i`), assumptions
+on variables, interval enclosures with root isolation, certificates that re-check a
+result, a numeric program export for `tpt-math`, and a WebAssembly build (`playground/`).
 
-Not yet implemented: cubic and quartic radicals beyond the cases above,
-factoring, matrices, series and limits, complex numbers, assumptions on
-variables, and the integrations with the other TPT crates. See `TODO.md`.
+Not yet implemented: the integrations with other TPT crates, release automation, and
+the publishing decision for the git dependency. See `TODO.md`.
 
 ## Testing
 

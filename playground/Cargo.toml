@@ -1,0 +1,15 @@
+[package]
+name = "tpt-symbolic-playground"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly build of tpt-symbolic for the browser playground."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tpt-symbolic = { path = "..", features = ["wasm"] }
+
+[workspace]

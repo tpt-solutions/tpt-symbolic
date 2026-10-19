@@ -30,7 +30,9 @@ pub fn eval(e: &Expr, env: &[(&str, Number)]) -> Result<Number, Error> {
     match e {
         Expr::Const(n) => Ok(n.clone()),
         // π and e are irrational, so no exact rational value exists.
-        Expr::Pi | Expr::E => Err(Error::Unsupported("pi and e have no exact rational value")),
+        Expr::Pi | Expr::E | Expr::I => Err(Error::Unsupported(
+            "pi, e and i have no exact rational value",
+        )),
         Expr::Var(name) => env
             .iter()
             .find(|(n, _)| *n == &**name)

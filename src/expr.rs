@@ -116,6 +116,9 @@ pub enum Expr {
     Pi,
     /// Euler's number e. Irrational, so it is never folded into a [`Number`].
     E,
+    /// The imaginary unit, with `I * I = -1`. Products and powers of `I` are reduced
+    /// by the [`crate::simplify`] rules, not by the constructors.
+    I,
 }
 
 impl Expr {
@@ -156,7 +159,7 @@ impl Expr {
     pub fn contains_var(&self, name: &str) -> bool {
         match self {
             Expr::Var(v) => &**v == name,
-            Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E => false,
+            Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E | Expr::I => false,
             Expr::Add(v) | Expr::Mul(v) | Expr::And(v) | Expr::Or(v) => {
                 v.iter().any(|e| e.contains_var(name))
             }
@@ -169,7 +172,7 @@ impl Expr {
     /// expression. Arithmetic operations are defined only on such trees.
     pub fn is_arithmetic(&self) -> bool {
         match self {
-            Expr::Var(_) | Expr::Const(_) | Expr::Pi | Expr::E => true,
+            Expr::Var(_) | Expr::Const(_) | Expr::Pi | Expr::E | Expr::I => true,
             Expr::Bool(_) | Expr::Eq(..) | Expr::And(_) | Expr::Or(_) | Expr::Not(_) => false,
             Expr::Add(v) | Expr::Mul(v) => v.iter().all(Expr::is_arithmetic),
             Expr::Pow(a, b) => a.is_arithmetic() && b.is_arithmetic(),
@@ -427,7 +430,9 @@ impl Expr {
             return repl.clone();
         }
         match self {
-            Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E => self.clone(),
+            Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E | Expr::I => {
+                self.clone()
+            }
             Expr::Add(v) => Expr::sum(v.iter().map(|e| e.replace(target, repl)).collect()),
             Expr::Mul(v) => Expr::product(v.iter().map(|e| e.replace(target, repl)).collect()),
             Expr::Pow(b, e) => Expr::power(b.replace(target, repl), e.replace(target, repl)),
@@ -579,7 +584,7 @@ const P_ATOM: u8 = 10;
 
 fn precedence(e: &Expr) -> u8 {
     match e {
-        Expr::Var(_) | Expr::Func(..) | Expr::Bool(_) | Expr::Pi | Expr::E => P_ATOM,
+        Expr::Var(_) | Expr::Func(..) | Expr::Bool(_) | Expr::Pi | Expr::E | Expr::I => P_ATOM,
         Expr::Const(n) if n.is_negative() => P_ADD,
         Expr::Const(n) if n.is_integer() => P_ATOM,
         Expr::Const(_) => P_MUL,
@@ -649,6 +654,7 @@ fn write_bare(f: &mut fmt::Formatter<'_>, e: &Expr) -> fmt::Result {
         Expr::Bool(b) => f.write_str(if *b { "true" } else { "false" }),
         Expr::Pi => f.write_str("pi"),
         Expr::E => f.write_str("e"),
+        Expr::I => f.write_str("i"),
         Expr::Func(func, arg) => {
             write!(f, "{}(", func.name())?;
             write_at(f, arg, 0)?;

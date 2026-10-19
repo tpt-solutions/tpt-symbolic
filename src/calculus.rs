@@ -8,9 +8,10 @@
 //! [`Integral::Unevaluated`].
 
 use crate::error::Error;
+use crate::eval::subs;
 use crate::expr::{Expr, SymbolicFunc};
 use crate::mathr::Number;
-use crate::simplify::simplify;
+use crate::simplify::{expand, simplify};
 use alloc::format;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -58,7 +59,7 @@ pub fn diff(e: &Expr, var: &str) -> Result<Expr, Error> {
 
 fn diff_raw(e: &Expr, var: &str) -> Result<Expr, Error> {
     Ok(match e {
-        Expr::Pi | Expr::E => Expr::zero(),
+        Expr::Pi | Expr::E | Expr::I => Expr::zero(),
         Expr::Var(n) => {
             if &**n == var {
                 Expr::one()
@@ -164,15 +165,70 @@ fn outer_derivative(f: SymbolicFunc, a: &Expr) -> Expr {
 /// or no rule applies, the result is [`Integral::Unevaluated`].
 pub fn integrate(e: &Expr, var: &str) -> Integral {
     let integrand = simplify(e);
-    if let Some(f) = antideriv(&integrand, var, 0) {
-        let f = simplify(&f);
-        if let Ok(d) = diff(&f, var) {
-            if simplify(&d) == integrand {
-                return Integral::Exact(f);
+    // Try the integrand as written, then its expansion, so that `(x^2+1)^2` integrates
+    // term by term. Either form is accepted only when its derivative matches it.
+    for candidate in [integrand.clone(), simplify(&expand(&integrand))] {
+        if let Some(f) = antideriv(&candidate, var, 0) {
+            let f = simplify(&f);
+            if let Ok(d) = diff(&f, var) {
+                if simplify(&d) == candidate {
+                    return Integral::Exact(f);
+                }
             }
         }
     }
     Integral::Unevaluated(e.clone())
+}
+
+/// Definite integral of `e` over `[lower, upper]` as `F(upper) - F(lower)`.
+///
+/// Conservative. The result is [`Integral::Unevaluated`] unless the integrand is built
+/// only from polynomials with non-negative integer powers and the functions `sin`,
+/// `cos`, `exp`, `sinh`, `cosh`, `tanh` and `atan`. Those are continuous on the whole
+/// real line, so no pole or branch point can lie between the bounds. Poles and branch
+/// points are the one way a definite integral gives a wrong number, so anything else
+/// (including `1/x`, `log`, `abs`, `tan`, `asin`, `acos` and fractional powers) is
+/// left unevaluated.
+pub fn definite_integral(e: &Expr, var: &str, lower: &Expr, upper: &Expr) -> Integral {
+    if !is_regular(e) {
+        return Integral::Unevaluated(e.clone());
+    }
+    match integrate(e, var) {
+        Integral::Exact(f) => {
+            let upper_value = subs(&f, var, upper);
+            let lower_value = subs(&f, var, lower);
+            Integral::Exact(simplify(&Expr::difference(upper_value, lower_value)))
+        }
+        other @ Integral::Unevaluated(_) => other,
+    }
+}
+
+/// `true` if `e` has no pole or branch point the definite-integral rule must avoid.
+fn is_regular(e: &Expr) -> bool {
+    match e {
+        Expr::Var(_) | Expr::Const(_) | Expr::Pi | Expr::E | Expr::I => true,
+        Expr::Add(v) | Expr::Mul(v) => v.iter().all(is_regular),
+        Expr::Pow(base, exp) => {
+            let non_negative_integer = exp
+                .as_number()
+                .is_some_and(|n| n.is_integer() && !n.is_negative());
+            non_negative_integer && is_regular(base)
+        }
+        Expr::Func(f, arg) => {
+            let regular_function = matches!(
+                f,
+                SymbolicFunc::Sin
+                    | SymbolicFunc::Cos
+                    | SymbolicFunc::Exp
+                    | SymbolicFunc::Sinh
+                    | SymbolicFunc::Cosh
+                    | SymbolicFunc::Tanh
+                    | SymbolicFunc::Atan
+            );
+            regular_function && is_regular(arg)
+        }
+        _ => false,
+    }
 }
 
 /// Constant `k` when `e` is linear in `var` with slope `k` (that is, `e' = k`).
@@ -549,6 +605,50 @@ mod tests {
         assert!(!p("pi + e").contains_var("pi"));
         assert_eq!(p("pi + e").to_string(), "pi + e");
         assert!(crate::eval::eval(&p("pi"), &[]).is_err());
+    }
+
+    #[test]
+    fn integrate_expands_when_the_direct_form_fails() {
+        match integrate(&p("(x^2+1)^2"), "x") {
+            Integral::Exact(f) => {
+                assert_eq!(
+                    simplify(&diff(&f, "x").unwrap()),
+                    simplify(&expand(&p("(x^2+1)^2")))
+                );
+            }
+            other => panic!("expected an exact antiderivative, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn definite_integrals_of_regular_functions() {
+        // ∫_0^1 x^2 dx = 1/3, ∫_0^pi sin x dx = 2.
+        let third = Expr::rational(1, 3).unwrap();
+        assert_eq!(
+            definite_integral(&p("x^2"), "x", &Expr::zero(), &Expr::one()),
+            Integral::Exact(third)
+        );
+        assert_eq!(
+            definite_integral(&p("sin(x)"), "x", &Expr::zero(), &p("pi")),
+            Integral::Exact(Expr::int(2))
+        );
+        // ∫_0^1 (x^2+1)^2 dx = 28/15.
+        assert_eq!(
+            definite_integral(&p("(x^2+1)^2"), "x", &Expr::zero(), &Expr::one()),
+            Integral::Exact(Expr::rational(28, 15).unwrap())
+        );
+    }
+
+    #[test]
+    fn definite_integrals_with_possible_poles_are_not_evaluated() {
+        // ∫_{-1}^{1} 1/x dx is a principal value at best; it must not be reported as 0.
+        for src in ["1/x", "log(x)", "tan(x)", "sqrt(x)", "abs(x)"] {
+            let result = definite_integral(&p(src), "x", &p("-1"), &p("1"));
+            assert!(
+                matches!(result, Integral::Unevaluated(_)),
+                "{src}: got {result:?}"
+            );
+        }
     }
 
     #[test]

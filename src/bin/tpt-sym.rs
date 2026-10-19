@@ -28,7 +28,13 @@ const USAGE: &str = "usage:
   tpt-sym solve <equation> <var>
   tpt-sym eval <expr> <name=value>...
   tpt-sym decimal <expr> <digits>
-  tpt-sym latex <expr>";
+  tpt-sym latex <expr>
+  tpt-sym factor <expr> <var>
+  tpt-sym apart <numerator> <denominator> <var>
+  tpt-sym limit <expr> <var> <point|inf|-inf>
+  tpt-sym taylor <expr> <var> <point> <order>
+  tpt-sym definite <expr> <var> <lower> <upper>
+  tpt-sym trace <expr>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -88,6 +94,61 @@ fn run(args: &[String]) -> Result<String, Failure> {
             let refs: Vec<(&str, Number)> =
                 env.iter().map(|(n, v)| (n.as_str(), v.clone())).collect();
             Ok(eval(&expr, &refs)?.to_string())
+        }
+        "factor" => {
+            let f = tpt_symbolic::factor::factor(&parse_arg(text(0)?)?, text(1)?)?;
+            let note = if f.complete {
+                ""
+            } else {
+                "  (incomplete: a factor of degree 5 or more is not decided)"
+            };
+            Ok(format!("{}{note}", f.describe()))
+        }
+        "apart" => {
+            let num = parse_arg(text(0)?)?;
+            let den = parse_arg(text(1)?)?;
+            Ok(tpt_symbolic::apart::partial_fractions(&num, &den, text(2)?)?.to_string())
+        }
+        "limit" => {
+            let expr = parse_arg(text(0)?)?;
+            let var = text(1)?;
+            Ok(match text(2)? {
+                "inf" => describe_limit(&tpt_symbolic::limits::limit_at_infinity(&expr, var, true)),
+                "-inf" => {
+                    describe_limit(&tpt_symbolic::limits::limit_at_infinity(&expr, var, false))
+                }
+                point => {
+                    describe_limit(&tpt_symbolic::limits::limit(&expr, var, &parse_arg(point)?))
+                }
+            })
+        }
+        "taylor" => {
+            let order: usize = text(3)?.parse().map_err(|_| Failure::Usage)?;
+            let point = parse_arg(text(2)?)?;
+            Ok(
+                tpt_symbolic::limits::taylor(&parse_arg(text(0)?)?, text(1)?, &point, order)?
+                    .to_string(),
+            )
+        }
+        "definite" => {
+            let expr = parse_arg(text(0)?)?;
+            let lower = parse_arg(text(2)?)?;
+            let upper = parse_arg(text(3)?)?;
+            Ok(
+                match tpt_symbolic::calculus::definite_integral(&expr, text(1)?, &lower, &upper) {
+                    Integral::Exact(value) => value.to_string(),
+                    _ => String::from("no definite value found"),
+                },
+            )
+        }
+        "trace" => {
+            let (result, steps) = tpt_symbolic::simplify::simplify_trace(&parse_arg(text(0)?)?);
+            let mut out: Vec<String> = steps
+                .iter()
+                .map(|s| format!("{}: {} -> {}", s.rule, s.before, s.after))
+                .collect();
+            out.push(format!("result: {result}"));
+            Ok(out.join("\n"))
         }
         _ => Err(Failure::Usage),
     }
@@ -192,6 +253,17 @@ fn describe_solve(result: &SolveResult) -> String {
     }
 }
 
+/// Text for a limit result.
+fn describe_limit(limit: &tpt_symbolic::limits::Limit) -> String {
+    use tpt_symbolic::limits::Limit;
+    match limit {
+        Limit::Finite(v) => v.to_string(),
+        Limit::PositiveInfinity => String::from("+infinity"),
+        Limit::NegativeInfinity => String::from("-infinity"),
+        Limit::Unevaluated(_) => String::from("no limit found by the rules"),
+        _ => String::from("unrecognised limit result"),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::describe_parse_error;

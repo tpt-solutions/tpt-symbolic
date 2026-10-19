@@ -417,6 +417,7 @@ impl Parser {
                     None => Ok(match name.as_str() {
                         "pi" => Expr::Pi,
                         "e" => Expr::E,
+                        "i" => Expr::I,
                         _ => Expr::var(&name),
                     }),
                 }

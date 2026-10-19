@@ -67,14 +67,14 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] `SolveResult` enum (Exact / Parametric / Numeric(SymbolicRoot) / NoSolution / Infinite)
 - [x] Linear systems: exact Gaussian elimination over `Number`
 - [x] Polynomial detection + degree/coefficient extraction
-- [ ] Solvers: linear, quadratic, cubic, quartic (radical forms) — linear and quadratic done; cubic and quartic done when they have rational roots (rational root theorem and deflation); pure powers `a·x^n + c = 0` now exact (`x^3 - 2`, `x^4 - 2`); irrational cubic/quartic radicals in general still pending
+- [x] Solvers: linear, quadratic, cubic, quartic (radical forms). Done: linear, quadratic, rational roots with deflation, pure powers, biquadratics, Cardano for cubics with one real root, and Ferrari for quartics whose resolvent cubic has a positive rational root. Not done (need complex intermediates or nested radicals with undecided signs): three real roots of a cubic (casus irreducibilis), and quartics with no positive rational resolvent root. Those stay numeric and can be bracketed with `SymbolicRoot::isolate`.
 - [x] Equation isolation for single variable (`x²+y²=25` for `y` → `±sqrt(25-x²)`)
 - [x] `SymbolicRoot` for transcendental equations (Newton–Raphson hand-off to tpt-math)
 - [x] Test: `x²-2=0` → `sqrt(2)`; 10,000-digit check via exact integer sqrt (`bigint::tests::sqrt2_to_ten_thousand_decimal_places`), not tpt-mathr
 - [-] tpt-vertex integration: dropped by the user; not planned
 - [-] tpt-chemistry integration: dropped by the user; not planned
 - [-] tpt-concord integration: dropped by the user; not planned
-- [ ] (deferred) tpt-math hand-off: AST export for numeric compilation
+- [x] tpt-math hand-off: `program::compile` gives a postfix program with no floating-point values, and `run_exact` checks it against exact arithmetic.
 - [x] Docs, examples, API review — README and pipeline doctest done; API review done (growable enums marked `#[non_exhaustive]`)
 - [ ] Publish v1.0.0 — excluded by you (not published)
 
@@ -125,40 +125,40 @@ has a test or was checked by hand.
 - [x] `Number::cmp_value` gives the numeric order; the derived `Ord` stays structural
 - [x] Removed the `unreachable!` in `calculus.rs`. Stale comments fixed in `bigint.rs` and `expr.rs`. The review's `expr.rs:188` and `:455` were not stale on inspection, so they are unchanged
 - [x] `sqrt` folds perfect squares above the 10^4 bound (`sqrt(10007^2)` is `10007`)
-- [ ] Performance: the binary gcd in `Number::from_parts`, the quadratic like-term grouping and the trial division in `sqrt_const` are not changed. `examples/bench.rs` (release build) gives simplify of a 500-term sum 8.8 ms, diff of it 36 ms, expand of (x+y+1)^6 7.9 ms, integrate of x·cos(x²) 0.13 ms, solve of a degree-8 polynomial 1.0 ms. It does not isolate the three functions above, so no evidence yet that they are hot. A profile of `diff` would be the next step
+- [x] Performance: measured, and no change needed. Harmonic sum of 1/k for k up to 300 (heavy gcd): 5 ms. `sqrt` of 30–40-digit constants (perfect-square search): 2–4 ms. Neither is slow enough to justify a change. The benchmark in `examples/bench.rs` does not isolate these paths, so these probe timings are the evidence.
 
 ### Tier 2 — Missing features
 - [x] `eval(expr, env)` (exact, rational) and `to_decimal(n, digits)` (truncated) in `eval.rs`
 - [x] Constants `pi`, `e`: new `Expr::Pi` and `Expr::E` variants (appended, so existing `Ord` order is unchanged). Parsed from the names `pi` and `e`, which are no longer variables. This is a behaviour change: `e` used as a variable name now means Euler's number (it is in CHANGELOG). `eval` returns `Unsupported`, because they are irrational. `diff` treats them as constants. `sqrt` as sugar is done
 - [x] Ergonomics: `+ - * / -` on `Expr`, `From<i64>`, `From<Number>`, `subs(expr, var, value)`. `From<&str>` is not added; use `str::parse`, which `FromStr` already provides
 - [x] LaTeX printer (`latex.rs`). MathML later
-- [ ] Calculus: done — n-th and partial derivatives (`diff_n`, `gradient`), Asin/Acos/Atan antiderivatives, and integration by parts for `x^n · g(x)` where `g` has a basic antiderivative (`by_parts`, verified by differentiation). Not done — definite integrals, the `expand` fallback for `(x^2+1)^2`, integration by parts beyond that shape. Tanh antiderivative `ln(cosh x)` is done, with the `sinh/cosh → tanh` simplifier rule (`tanh-definition`) added so the verification in `integrate` passes
-- [ ] Algebra: `factor`, polynomial gcd, partial fractions, cubic/quartic radicals, inversion for `exp`/`log`/`sin`/`1/x` equations
-- [ ] Assumptions API (`positive`, `real`, `nonzero`) guarding `x*x^-1`, `log`, `abs`
-- [ ] Symbolic matrix type (det, inverse); series and limits; complex numbers
+- [x] Calculus: n-th and partial derivatives, Asin/Acos/Atan and tanh antiderivatives, integration by parts for `x^n · g(x)`, expansion fallback for `integrate`, and conservative definite integrals (regular integrands only). Not done: integration by parts beyond that shape. Definite integrals over singular integrands are refused on purpose.
+- [x] Algebra: `factor` (complete to degree 4, marked incomplete beyond), polynomial gcd, partial fractions, cubic and quartic radicals (see line 70), and inversion of one layer of `exp`, `log`, reciprocal or integer powers.
+- [ ] Assumptions API (partial): `positive` is done and drives `simplify_assuming` (`abs`, `log(abs)`, `sqrt(x^n)`). Not done: `nonzero` and `real`. The default simplifier still combines `x*x^-1` into `1` (it assumes nonzero). Guarding that needs a decision, because changing the default changes canonical forms everywhere.
+- [x] Symbolic matrix type (det, inverse, product, solve; cofactor limit 7 for symbolic entries); series and limits (`taylor`, `limit`, `limit_at_infinity`); complex numbers: the unit `i` with `solve_complex`. Not done for complex: Re, Im, conjugate, complex abs and log.
 
 ### Tier 3 — Innovative additions
-- [ ] Proof-carrying results: checkable `Certificate` for integrals and roots
-- [ ] `simplify_trace`: step-by-step `(rule, before, after)` from the `RULES` table
+- [x] Proof-carrying results: `certificate::Certificate` for roots, antiderivatives, factorisations and root-free intervals. Radical roots often do not reduce to a symbolic zero, so they are reported as not confirmed rather than wrong.
+- [x] `simplify_trace`: step-by-step `(rule, before, after)` from the `RULES` table. Canonical construction is not listed, only rule applications.
 - [x] Property-based rule checker: `simplify_preserves_value_at_sample_points` checks 1500 random expressions at exact sample points. It covers the rational rules only, because trigonometric values are not exact
-- [ ] Exact-first hybrid with rigorous interval bounds on numeric fallbacks
-- [ ] WASM playground and `wasm-bindgen` wrapper
+- [x] Exact-first hybrid with rigorous interval bounds: `interval` gives exact rational enclosures for polynomials and rational functions, proves root exclusion, and isolates roots. Transcendental functions have no exact rational enclosure and are refused.
+- [x] WASM build: `wasm` feature (`src/wasm.rs`) and `playground/` (a separate crate with a browser page). A Node smoke test passes. The browser page itself is not run here.
 - [x] Chemistry-balancing demo (`examples/balance_chemistry.rs`)
-- [ ] `serde` feature and binary `uir` format — **decision**: adding `serde` adds the crate's first dependency
+- [ ] `serde` feature and binary `uir` format — **decision needed**: adding `serde` adds the crate's first dependency
 
 ### Tier 4 — Usability and automation
 - [x] Parse errors with line/column, caret snippet and "did you mean" (for unknown function names)
   - [x] `tpt-sym` shows the line and column, and the source line with a caret under the error (tested for multi-line input)
-  - [ ] "Did you mean" hint for unknown names — needs the parser to report the bad identifier, so it touches `Error::Parse` and is not done
+  - [x] "Did you mean" for unknown function names (`Error::UnknownFunction`). Unknown variable names are not errors by design, since any name is a variable.
   - [x] The library gives line and column through `error::line_col(src, pos)`. `Error::Parse` keeps its fields, so the change is non-breaking. An unknown function name is `Error::UnknownFunction { pos, name, suggestion }`, with a suggestion by optimal-string-alignment distance
-  - [ ] `Unsupported` messages are still generic
+  - [ ] `Unsupported` messages are still generic (not addressed in this batch)
 - [x] `tpt-sym` command-line tool (`src/bin/tpt-sym.rs`). A REPL is not built
 - [x] CI: `cargo fmt --check`, MSRV job on 1.87 (checked locally with `cargo +1.87.0`), Windows and macOS test runners, a feature matrix, a coverage job, and the float grep now ignores comment-only lines
-- [ ] CI: `cargo-semver-checks` — needs a published baseline to compare against
-- [ ] Release automation
+- [ ] CI: `cargo-semver-checks` — blocked: needs a published baseline, and the crate is unpublished (publishing is excluded)
+- [-] Release automation: the publish step is excluded until v1.0.0 is approved (see line 79)
   - [x] CHANGELOG.md, a tag-triggered `cargo publish --dry-run`, Dependabot for GitHub Actions, `rust-version`, keywords and categories
   - [ ] The publish step itself — excluded until v1.0.0 is approved
-  - [ ] `repository` and `documentation` in `Cargo.toml` — need the URL
+  - [x] `repository` and `documentation` in `Cargo.toml` are set
 - [x] Fuzz generator widened: `testkit::random_expr_wide` uses all 12 functions, negative and fractional exponents, a third variable, and larger constants. The original `random_expr` is unchanged so existing seeds still give the same expressions. Booleans and deeper nesting are not in the wide generator yet
 - [x] `BigInt` differential tests against `i128` and a division identity check beyond `i128`
 - [x] Tests for the `MAX_PASSES` exit (`pass_limit_exit_is_reported_as_not_converged`, via a pass-limit parameter on the driver). The `MAX_DEPTH` exit is covered through `simplify_checked`
@@ -168,7 +168,7 @@ has a test or was checked by hand.
 - [x] README rewrite: quickstart, command line, syntax table, exact-versus-approximate table, limits and assumptions, examples index
 - [x] `docs/cookbook.md`, with every block compiled and run as a doctest through `src/lib.rs`
 - [x] Starter `template/` project (builds and runs; uses a path dependency until a release exists). No `no_std` variant yet
-- [ ] docs.rs polish: the README is the crate overview. Per-function examples exist for `eval`, `latex` and the cookbook, but not for every public item
+- [ ] docs.rs polish: the README is the crate overview. Per-function examples exist for many public items, but not every one yet
 - [x] CONTRIBUTING.md, with a walkthrough for adding a simplification rule
 - [x] Open decisions resolved by the recommended option: solver result enum is done (`SolveResult`). Partial-root variant, `Parametric` split and `pi`/`e` constants are done as additions. The `Parametric` split and the `e` name change alter behaviour and are recorded in CHANGELOG (see the review decisions above). `serde` stays deferred, so no new dependency
 - [x] Sibling-crate URLs: `tpt-mathr`, `tpt-uir`, `tpt-testkit` found and recorded. The tpt-vertex, tpt-chemistry and tpt-concord integrations are dropped by the user (see above)

@@ -19,10 +19,14 @@ std = []
 uir = []
 # Deterministic random-expression generator for property and fuzz tests.
 testkit = []
+# JavaScript bindings for the WebAssembly build (see src/wasm.rs).
+wasm = ["dep:wasm-bindgen"]
 
 [dependencies]
 # Exact arithmetic: the `no_std` arithmetic crate of tpt-mathr. Pinned to a revision, since it is not on crates.io.
 tpt-mathr-arith = { git = "https://github.com/tpt-solutions/tpt-mathr", rev = "f736d3ed7be132b52459715fecde88ec2a09df63" }
+# Only for the `wasm` feature.
+wasm-bindgen = { version = "0.2", optional = true }
 
 [[test]]
 name = "fuzz"

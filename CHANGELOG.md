@@ -30,7 +30,28 @@ use semantic versioning once v1.0.0 is released.
 - Integration of `tanh`, with a simplifier rule `sinh(x)*cosh(x)^-1` → `tanh(x)`.
 - Biquadratic equations `a·x^4 + b·x^2 + c = 0` have exact real roots.
 
+- `factor`: rational roots, quartics into integer quadratics, and marked incomplete beyond degree 4. `Factorization::describe` prints the factors separately.
+- `apart::partial_fractions`: exact decomposition over the rationals, checked at sample points.
+- `factor::gcd`: polynomial gcd over the rationals.
+- `limits`: `taylor` (exact series), `limit` and `limit_at_infinity` (direct substitution, L'Hôpital, degree comparison).
+- `matrix::Matrix`: determinant, inverse, product, transpose, and a linear solve, exact for numeric entries and cofactor-based for symbolic ones.
+- `calculus::definite_integral`, conservative: only regular integrands are evaluated. `integrate` tries the expansion when the direct form fails.
+- `simplify::simplify_trace`: the rule applications that produced a result.
+- Imaginary unit `i` (`Expr::I`) and `solve_complex`, which returns complex roots of quadratics.
+- Exact `sin` and `cos` at multiples of pi/12 (the `special-angle` rule).
+- Radical solutions: Cardano for cubics with one real root, and Ferrari for quartics whose resolvent cubic has a positive rational root.
+- Equations of the form `exp(u) = c`, `log(u) = c`, `1/u = c`, and `u^n = c` are inverted, and the inner equation is solved exactly.
+- `assume::simplify_assuming`: `abs` and `log(abs)` rules for variables declared positive.
+- `interval`: exact rational interval enclosures for polynomial and rational expressions, root exclusion, and root isolation. `SymbolicRoot::isolate` uses it on numeric hand-offs.
+- `certificate::Certificate`: checkable records for roots, antiderivatives, factorisations and root-free intervals.
+- `program::compile` and `run_exact`: a postfix program for numeric back ends such as `tpt-math`, with no floating-point values in the core.
+- `wasm` feature (`src/wasm.rs`) and a browser page in `playground/`.
+- CLI commands: `factor`, `apart`, `limit`, `taylor`, `definite`, `trace`.
+
 ### Changed
+- `i` parses as the imaginary unit, not a variable, as `e` and `pi` do.
+- `eval` refuses `pi`, `e` and `i`, which have no exact rational value.
+- The `wasm` feature is off by default, and the `no_std` targets are unaffected.
 - Exact arithmetic now uses `tpt-mathr-arith` (the `no_std` arithmetic crate of tpt-mathr, pinned to git revision `f736d3e`). Breaking: `Number::numer()` and `Number::denom()` return an owned `BigInt` instead of a reference. The `stub-mathr` feature and its compile gate are removed. Git dependencies cannot be published to crates.io, so this must be resolved before any release. On `examples/bench.rs`, arithmetic is faster than the old stub after the integer fast paths.
 - `pi` and `e` parse as constants, not variables. `eval` returns `Unsupported` for them, and `diff` treats them as constants.
 - `solve` on an equation with no unknown returns `SolveResult::Conditional` instead of `Parametric`. `Parametric` now means free unknowns in linear systems only.
