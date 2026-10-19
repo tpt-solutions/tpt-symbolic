@@ -177,6 +177,12 @@ pub fn integrate(e: &Expr, var: &str) -> Integral {
             }
         }
     }
+    // Rational integrands are integrated by partial fractions. The result is checked term
+    // by term at exact points, since its symbolic derivative does not always simplify to
+    // the integrand's form.
+    if let Some(f) = rational_antiderivative(&integrand, var) {
+        return Integral::Exact(simplify(&f));
+    }
     Integral::Unevaluated(e.clone())
 }
 
@@ -510,6 +516,161 @@ fn push_candidate(g: &Expr, var: &str, out: &mut Vec<Expr>) {
     }
 }
 
+/// Antiderivative of a rational function of `var`, by partial fractions.
+///
+/// Polynomial parts are integrated term by term. A term `A/(x + c)` gives `A log|x + c|`,
+/// and `A/(x + c)^j` for `j > 1` gives the power rule. A term `(Bx + C)/(x^2 + px + q)` with
+/// `4q - p^2 > 0` gives `(B/2) log(x^2 + px + q) + (C - Bp/2) (2/s) atan((2x + p)/s)`,
+/// where `s = sqrt(4q - p^2)`. Higher powers of an irreducible quadratic are not
+/// integrated here, and neither are factors of degree three or more.
+fn rational_antiderivative(e: &Expr, var: &str) -> Option<Expr> {
+    let (num, den) = crate::limits::combined_quotient(e).unwrap_or((e.clone(), Expr::one()));
+    let d = crate::apart::decompose(&num, &den, var).ok()?;
+    let x = Expr::var(var);
+    let mut parts = Vec::new();
+    for (k, c) in d.polynomial.iter().enumerate() {
+        if c.is_zero() {
+            continue;
+        }
+        let k1 = i128::try_from(k + 1).ok()?;
+        let coeff = c.checked_div(&Number::from_int(k1))?;
+        parts.push(Expr::product(vec![
+            Expr::Const(coeff),
+            Expr::power(x.clone(), Expr::int(k1)),
+        ]));
+    }
+    for term in &d.terms {
+        parts.push(partial_term_antiderivative(term, var)?);
+    }
+    Some(Expr::sum(parts))
+}
+
+/// Antiderivative of one partial-fraction term, checked at exact points where it needs
+/// checking.
+fn partial_term_antiderivative(t: &crate::apart::PartialTerm, var: &str) -> Option<Expr> {
+    let f_expr = crate::factor::poly_expr(&t.factor, var);
+    match t.factor.len() {
+        // Linear factor x + c, monic: factor = [c, 1], numerator = [a].
+        2 => {
+            let a = t.numerator.first()?.clone();
+            if t.power == 1 {
+                Some(Expr::product(vec![
+                    Expr::Const(a),
+                    Expr::func(SymbolicFunc::Log, Expr::func(SymbolicFunc::Abs, f_expr)),
+                ]))
+            } else {
+                let exp = 1 - i128::try_from(t.power).ok()?;
+                let coeff = a.checked_div(&Number::from_int(exp))?;
+                Some(Expr::product(vec![
+                    Expr::Const(coeff),
+                    Expr::power(f_expr, Expr::int(exp)),
+                ]))
+            }
+        }
+        // Irreducible quadratic f = x^2 + p x + q, factor = [q, p, 1], numerator = [c, b].
+        3 if t.power == 1 => {
+            let (q, p) = (t.factor[0].clone(), t.factor[1].clone());
+            let c = t.numerator[0].clone();
+            let b = t.numerator[1].clone();
+            if !quadratic_term_matches(&b, &c, &p, &q) {
+                return None;
+            }
+            let disc = Number::from_int(4)
+                .checked_mul(&q)?
+                .checked_sub(&p.checked_mul(&p)?)?;
+            if !disc.cmp_value(&Number::zero()).is_gt() {
+                return None;
+            }
+            let half_b = b.checked_div(&Number::from_int(2))?;
+            let k = c.checked_sub(&b.checked_mul(&p)?.checked_div(&Number::from_int(2))?)?;
+            let two_k = k.checked_mul(&Number::from_int(2))?;
+            let s_inv = Expr::power(Expr::Const(disc), Expr::Const(Number::new(-1, 2)?));
+            let arg = Expr::product(vec![
+                Expr::sum(vec![
+                    Expr::product(vec![Expr::int(2), x_of(var)]),
+                    Expr::Const(p),
+                ]),
+                s_inv.clone(),
+            ]);
+            Some(Expr::sum(vec![
+                Expr::product(vec![
+                    Expr::Const(half_b),
+                    Expr::func(SymbolicFunc::Log, f_expr),
+                ]),
+                Expr::product(vec![
+                    Expr::Const(two_k),
+                    s_inv,
+                    Expr::func(SymbolicFunc::Atan, arg),
+                ]),
+            ]))
+        }
+        _ => None,
+    }
+}
+
+fn x_of(var: &str) -> Expr {
+    Expr::var(var)
+}
+
+/// Checks `d/dx [(b/2) log f + (c - bp/2)(2/s) atan((2x+p)/s)] = (bx + c)/f` at seven exact
+/// points, for `f = x^2 + p x + q` with `s^2 = 4q - p^2`. Both sides are rational
+/// functions of degree at most two, so agreement at seven points proves identity.
+fn quadratic_term_matches(b: &Number, c: &Number, p: &Number, q: &Number) -> bool {
+    let Some(disc) = Number::from_int(4)
+        .checked_mul(q)
+        .and_then(|v| v.checked_sub(&p.checked_mul(p)?))
+    else {
+        return false;
+    };
+    let Some(k) = b
+        .checked_mul(p)
+        .and_then(|bp| bp.checked_div(&Number::from_int(2)))
+        .and_then(|bp2| c.checked_sub(&bp2))
+    else {
+        return false;
+    };
+    for x0 in [-3i128, -2, -1, 0, 1, 2, 3] {
+        let x0 = Number::from_int(x0);
+        // f(x0) and f'(x0) = 2 x0 + p.
+        let f0 = x0
+            .checked_mul(&x0)
+            .and_then(|v| v.checked_add(&p.checked_mul(&x0)?))
+            .and_then(|v| v.checked_add(q));
+        let f0 = match f0 {
+            Some(v) if !v.is_zero() => v,
+            _ => return false,
+        };
+        let fp0 = Number::from_int(2)
+            .checked_mul(&x0)
+            .and_then(|v| v.checked_add(p));
+        let Some(fp0) = fp0 else { return false };
+        // d/dx of (2k/s) atan(u), u = (2x + p)/s: (2k/s)(2/s)/(1 + u^2) = 4k / (disc (1 + u^2)).
+        let Some(u_sq) = fp0.checked_mul(&fp0).and_then(|v| v.checked_div(&disc)) else {
+            return false;
+        };
+        let atan_part = Number::from_int(4)
+            .checked_mul(&k)
+            .and_then(|v| v.checked_div(&disc))
+            .and_then(|v| v.checked_div(&Number::one().checked_add(&u_sq)?));
+        let log_part = b
+            .checked_div(&Number::from_int(2))
+            .and_then(|hb| hb.checked_mul(&fp0))
+            .and_then(|v| v.checked_div(&f0));
+        let (Some(atan_part), Some(log_part)) = (atan_part, log_part) else {
+            return false;
+        };
+        let lhs = atan_part.checked_add(&log_part);
+        let rhs = b
+            .checked_mul(&x0)
+            .and_then(|v| v.checked_add(c))
+            .and_then(|v| v.checked_div(&f0));
+        if lhs != rhs {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,6 +781,33 @@ mod tests {
                 other => panic!("{src}: expected an exact antiderivative, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn rational_functions_integrate_by_partial_fractions() {
+        for src in [
+            "1/(x^2+1)",
+            "1/(x^2-1)",
+            "x/(x^2+1)",
+            "(2*x+3)/(x^2+2*x+5)",
+            "x^3/(x^2+1)",
+            "1/(x*(x+1)^2)",
+        ] {
+            assert!(
+                matches!(integrate(&p(src), "x"), Integral::Exact(_)),
+                "{src} should integrate"
+            );
+        }
+        // atan appears for the irreducible quadratic.
+        let Integral::Exact(f) = integrate(&p("1/(x^2+1)"), "x") else {
+            panic!("expected an exact antiderivative");
+        };
+        assert_eq!(f, simplify(&p("atan(x)")));
+        // An irreducible cubic in the denominator has no closed form here.
+        assert!(matches!(
+            integrate(&p("1/(x^3+x+1)"), "x"),
+            Integral::Unevaluated(_)
+        ));
     }
 
     #[test]

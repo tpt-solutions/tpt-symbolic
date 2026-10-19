@@ -34,7 +34,10 @@ const USAGE: &str = "usage:
   tpt-sym limit <expr> <var> <point|inf|-inf>
   tpt-sym taylor <expr> <var> <point> <order>
   tpt-sym definite <expr> <var> <lower> <upper>
-  tpt-sym trace <expr>";
+  tpt-sym trace <expr>
+  tpt-sym re <expr>
+  tpt-sym im <expr>
+  tpt-sym conj <expr>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -140,6 +143,16 @@ fn run(args: &[String]) -> Result<String, Failure> {
                     _ => String::from("no definite value found"),
                 },
             )
+        }
+        "re" | "im" | "conj" => {
+            let e = parse_arg(text(0)?)?;
+            let out = match cmd.as_str() {
+                "re" => tpt_symbolic::complex::real_part(&e),
+                "im" => tpt_symbolic::complex::imag_part(&e),
+                _ => tpt_symbolic::complex::conjugate(&e),
+            };
+            out.map(|v| v.to_string())
+                .ok_or_else(|| Failure::Message(String::from("not a polynomial in i")))
         }
         "trace" => {
             let (result, steps) = tpt_symbolic::simplify::simplify_trace(&parse_arg(text(0)?)?);

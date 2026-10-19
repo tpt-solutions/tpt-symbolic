@@ -207,7 +207,7 @@ fn is_regular_at(e: &Expr, var: &str, point: &Expr) -> bool {
 /// Writes a sum of quotients over one shared denominator as a single `(numerator, denominator)`.
 /// Terms that are not quotients count as having denominator one, so they only combine when
 /// the others share that denominator too. Returns `None` otherwise.
-fn combined_quotient(f: &Expr) -> Option<(Expr, Expr)> {
+pub(crate) fn combined_quotient(f: &Expr) -> Option<(Expr, Expr)> {
     let Expr::Add(terms) = f else {
         return split_quotient(f);
     };
@@ -262,28 +262,37 @@ fn is_defined(e: &Expr) -> bool {
 /// Splits `f` into `(numerator, denominator)` when it is a product with a `D^-1` factor
 /// (or is `D^-1` itself). Returns `None` otherwise.
 fn split_quotient(f: &Expr) -> Option<(Expr, Expr)> {
-    match f {
-        Expr::Pow(base, exp) if exp.as_number() == Some(Number::neg_one()) => {
-            Some((Expr::one(), (**base).clone()))
+    // Each factor D^(-n) with n a positive integer goes to the denominator as D^n. Other
+    // factors form the numerator. At least one negative power is needed.
+    let negative_power = |t: &Expr| -> Option<(Expr, i128)> {
+        match t {
+            Expr::Pow(base, exp) => {
+                let n = exp.as_number()?;
+                if n.is_integer() && n.is_negative() {
+                    Some(((**base).clone(), n.as_i128()?.checked_neg()?))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
-        Expr::Mul(v) => {
-            let idx = v.iter().position(
-                |t| matches!(t, Expr::Pow(_, e) if e.as_number() == Some(Number::neg_one())),
-            )?;
-            let den = match &v[idx] {
-                Expr::Pow(base, _) => (**base).clone(),
-                _ => return None,
-            };
-            let rest: Vec<Expr> = v
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != idx)
-                .map(|(_, t)| t.clone())
-                .collect();
-            Some((Expr::product(rest), den))
+    };
+    let factors: Vec<Expr> = match f {
+        Expr::Mul(v) => v.clone(),
+        other => vec![other.clone()],
+    };
+    let mut num = Vec::new();
+    let mut den = Vec::new();
+    for t in &factors {
+        match negative_power(t) {
+            Some((base, n)) => den.push(Expr::power(base, Expr::int(n))),
+            None => num.push(t.clone()),
         }
-        _ => None,
     }
+    if den.is_empty() {
+        return None;
+    }
+    Some((Expr::product(num), Expr::product(den)))
 }
 
 /// The polynomial `e` in `var` as a list of `(degree, coefficient)` monomials, from its

@@ -364,6 +364,14 @@ impl Expr {
                     }
                 }
             }
+            // c^(-1/2) = 1 / sqrt(c) when the square root folds.
+            if n == Number::new(-1, 2).unwrap_or(Number::one()) {
+                if let Expr::Const(b) = &base {
+                    if let Some(root) = sqrt_const(b.clone()) {
+                        return Expr::power(root, Expr::int(-1));
+                    }
+                }
+            }
         }
         Expr::Pow(Box::new(base), Box::new(exp))
     }

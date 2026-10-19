@@ -7,6 +7,9 @@
 //! checked against the original rational function at sample points, and returned only if
 //! it agrees.
 //!
+//! [`decompose`] is the same computation with the terms returned as data, for callers
+//! that integrate or differentiate them term by term.
+//!
 //! The denominator must factor completely (see [`crate::factor`]). Otherwise the
 //! result is an error, not an incomplete answer.
 
@@ -23,6 +26,26 @@ use alloc::vec::Vec;
 /// Points at which the decomposition is compared with the original function.
 const CHECK_POINTS: [i128; 7] = [-3, -2, -1, 0, 1, 2, 3];
 
+/// One term `numerator / factor^power` of a decomposition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PartialTerm {
+    /// Numerator, lowest degree first, of degree below `factor`'s degree.
+    pub numerator: Vec<Number>,
+    /// The irreducible factor, monic, lowest degree first.
+    pub factor: Vec<Number>,
+    /// The power of the factor in the denominator (at least 1).
+    pub power: usize,
+}
+
+/// `num / den = polynomial + sum of terms`, with polynomial and coefficients lowest first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Decomposition {
+    /// The polynomial part.
+    pub polynomial: Vec<Number>,
+    /// The fractional terms.
+    pub terms: Vec<PartialTerm>,
+}
+
 /// The decomposition `num / den` as an expression in `var`.
 /// # Example
 /// ```
@@ -32,6 +55,68 @@ const CHECK_POINTS: [i128; 7] = [-3, -2, -1, 0, 1, 2, 3];
 /// assert_eq!(d.to_string(), "-1/2*(x + 1)^(-1) + 1/2*(x - 1)^(-1)");
 /// ```
 pub fn partial_fractions(num: &Expr, den: &Expr, var: &str) -> Result<Expr, Error> {
+    let decomposition = decompose_exprs(num, den, var)?;
+    let mut terms = vec![poly_expr(&decomposition.polynomial, var)];
+    for term in &decomposition.terms {
+        let denom = Expr::power(poly_expr(&term.factor, var), Expr::int(term.power as i128));
+        terms.push(Expr::quotient(poly_expr(&term.numerator, var), denom));
+    }
+    let result = simplify(&Expr::sum(terms));
+
+    // Compare with the original at sample points where the denominator is non-zero.
+    let original = Expr::quotient(num.clone(), den.clone());
+    let mut checked = 0;
+    for x in CHECK_POINTS {
+        let point = [(var, Number::from_int(x))];
+        let (Ok(want), Ok(got)) = (eval(&original, &point), eval(&result, &point)) else {
+            continue;
+        };
+        if want != got {
+            return Err(Error::Unsupported("partial fraction check failed"));
+        }
+        checked += 1;
+    }
+    if checked < 3 {
+        return Err(Error::Unsupported(
+            "too few sample points to check the decomposition",
+        ));
+    }
+    Ok(result)
+}
+
+/// Decomposes `num / den` into data. Checked the same way as [`partial_fractions`].
+pub(crate) fn decompose(num: &Expr, den: &Expr, var: &str) -> Result<Decomposition, Error> {
+    let d = decompose_exprs(num, den, var)?;
+    let original = Expr::quotient(num.clone(), den.clone());
+    let rebuilt = {
+        let mut terms = vec![poly_expr(&d.polynomial, var)];
+        for t in &d.terms {
+            let denom = Expr::power(poly_expr(&t.factor, var), Expr::int(t.power as i128));
+            terms.push(Expr::quotient(poly_expr(&t.numerator, var), denom));
+        }
+        simplify(&Expr::sum(terms))
+    };
+    let mut checked = 0;
+    for x in CHECK_POINTS {
+        let point = [(var, Number::from_int(x))];
+        let (Ok(want), Ok(got)) = (eval(&original, &point), eval(&rebuilt, &point)) else {
+            continue;
+        };
+        if want != got {
+            return Err(Error::Unsupported("partial fraction check failed"));
+        }
+        checked += 1;
+    }
+    if checked < 3 {
+        return Err(Error::Unsupported(
+            "too few sample points to check the decomposition",
+        ));
+    }
+    Ok(d)
+}
+
+/// The linear-algebra core shared by [`partial_fractions`] and [`decompose`].
+fn decompose_exprs(num: &Expr, den: &Expr, var: &str) -> Result<Decomposition, Error> {
     let p = dense_coefficients(num, var).ok_or(Error::Unsupported(
         "partial fractions need polynomial numerators",
     ))?;
@@ -78,7 +163,10 @@ pub fn partial_fractions(num: &Expr, den: &Expr, var: &str) -> Result<Expr, Erro
     let cols = columns.len();
     if cols == 0 {
         // The denominator is a constant: the decomposition is just the polynomial part.
-        return Ok(simplify(&poly_expr(&s, var)));
+        return Ok(Decomposition {
+            polynomial: s,
+            terms: Vec::new(),
+        });
     }
     // Row d (coefficient of x^d): sum over columns of [x^(d-t)] B.
     let mut matrix = vec![vec![Number::zero(); cols]; rows];
@@ -107,43 +195,30 @@ pub fn partial_fractions(num: &Expr, den: &Expr, var: &str) -> Result<Expr, Erro
         .map(|e| e.as_number().ok_or(Error::Overflow))
         .collect::<Result<_, _>>()?;
 
-    // Assemble: polynomial part, plus sum over pieces of (sum_t a_t x^t) / f^j.
-    let mut terms = vec![poly_expr(&s, var)];
-    for (idx, (f, j)) in pieces.iter().enumerate() {
-        let numerator: Vec<Number> = columns
-            .iter()
-            .enumerate()
-            .filter(|(_, (piece, _, _))| *piece == idx)
-            .map(|(k, (_, _, t))| (*t, values[k].clone()))
-            .fold(vec![Number::zero(); f.len() - 1], |mut acc, (t, v)| {
-                acc[t] = v;
-                acc
-            });
-        let f_expr = poly_expr(f, var);
-        let denom = Expr::power(f_expr, Expr::int(*j as i128));
-        terms.push(Expr::quotient(poly_expr(&numerator, var), denom));
-    }
-    let result = simplify(&Expr::sum(terms));
-
-    // Compare with the original at sample points where the denominator is non-zero.
-    let original = Expr::quotient(num.clone(), den.clone());
-    let mut checked = 0;
-    for x in CHECK_POINTS {
-        let point = [(var, Number::from_int(x))];
-        let (Ok(want), Ok(got)) = (eval(&original, &point), eval(&result, &point)) else {
-            continue;
-        };
-        if want != got {
-            return Err(Error::Unsupported("partial fraction check failed"));
-        }
-        checked += 1;
-    }
-    if checked < 3 {
-        return Err(Error::Unsupported(
-            "too few sample points to check the decomposition",
-        ));
-    }
-    Ok(result)
+    let terms = pieces
+        .iter()
+        .enumerate()
+        .map(|(idx, (f, j))| {
+            let numerator: Vec<Number> = columns
+                .iter()
+                .enumerate()
+                .filter(|(_, (piece, _, _))| *piece == idx)
+                .map(|(k, (_, _, t))| (*t, values[k].clone()))
+                .fold(vec![Number::zero(); f.len() - 1], |mut acc, (t, v)| {
+                    acc[t] = v;
+                    acc
+                });
+            PartialTerm {
+                numerator,
+                factor: f.clone(),
+                power: *j,
+            }
+        })
+        .collect();
+    Ok(Decomposition {
+        polynomial: s,
+        terms,
+    })
 }
 
 /// Drops high-degree zero coefficients.
@@ -269,5 +344,12 @@ mod tests {
         let q = dense_coefficients(&expand(&p("(x-1)*(x+2)")), "x").unwrap();
         assert_eq!(q.len(), 3);
         assert_eq!(q[0], Number::from_int(-2));
+    }
+
+    #[test]
+    fn decompose_returns_terms_with_their_powers() {
+        let d = decompose(&p("1"), &p("x*(x-1)^2"), "x").unwrap();
+        let powers: Vec<usize> = d.terms.iter().map(|t| t.power).collect();
+        assert_eq!(powers.iter().sum::<usize>(), 1 + 1 + 2);
     }
 }

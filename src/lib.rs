@@ -17,6 +17,7 @@ pub mod assume;
 pub mod bigint;
 pub mod calculus;
 pub mod certificate;
+pub mod complex;
 pub mod error;
 pub mod eval;
 pub mod expr;
