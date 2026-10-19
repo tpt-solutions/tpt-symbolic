@@ -71,10 +71,10 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] Equation isolation for single variable (`x²+y²=25` for `y` → `±sqrt(25-x²)`)
 - [x] `SymbolicRoot` for transcendental equations (Newton–Raphson hand-off to tpt-math)
 - [x] Test: `x²-2=0` → `sqrt(2)` (10,000-digit check vs tpt-mathr pending the real crate)
-- [ ] tpt-vertex integration: CAD constraint pipeline example (distance = 5)
-- [ ] tpt-chemistry integration: balance `C3H8 + O2 → CO2 + H2O` as integer nullspace — the nullspace core is done and tested; wiring into tpt-chemistry is blocked on that repo
-- [ ] tpt-concord integration: boolean satisfiability/contradiction check API
-- [ ] tpt-math hand-off: AST export for numeric compilation
+- [ ] (deferred) tpt-vertex integration: CAD constraint pipeline example (distance = 5)
+- [ ] (deferred) tpt-chemistry integration: balance `C3H8 + O2 → CO2 + H2O` as integer nullspace — the nullspace core is done and tested; wiring into tpt-chemistry is blocked on that repo
+- [ ] (deferred) tpt-concord integration: boolean satisfiability/contradiction check API
+- [ ] (deferred) tpt-math hand-off: AST export for numeric compilation
 - [ ] Docs, examples, API review — README and pipeline doctest done; API review pending
 - [ ] Publish v1.0.0 — excluded by you (not published)
 
