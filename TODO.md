@@ -35,7 +35,7 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] Pretty printer (round-trips with parser)
 - [x] `tpt-uir` serialization / deserialization
 - [x] Tests: `a+b == b+a`, idempotent canonicalization, 1/3+1/3+1/3 == 1
-- [ ] Golden files: thousands of equivalent-syntax inputs → same AST (partial: small corpus in `parse::tests`; scale-up pending)
+- [x] Golden files: thousands of equivalent-syntax inputs → same AST (1000 random expressions × 5 spellings in `parse::tests`, plus a hand-written corpus)
 - [x] **Milestone:** parse, store, perfectly canonicalize expressions
 
 ## Phase 2 — Simplification Engine (Weeks 4–6)
@@ -67,7 +67,7 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] `SolveResult` enum (Exact / Parametric / Numeric(SymbolicRoot) / NoSolution / Infinite)
 - [x] Linear systems: exact Gaussian elimination over `Number`
 - [x] Polynomial detection + degree/coefficient extraction
-- [ ] Solvers: linear, quadratic, cubic, quartic (radical forms) — linear and quadratic done; cubic and quartic pending
+- [ ] Solvers: linear, quadratic, cubic, quartic (radical forms) — linear and quadratic done; cubic and quartic done when they have rational roots (rational root theorem and deflation); irrational cubic/quartic radicals still pending
 - [x] Equation isolation for single variable (`x²+y²=25` for `y` → `±sqrt(25-x²)`)
 - [x] `SymbolicRoot` for transcendental equations (Newton–Raphson hand-off to tpt-math)
 - [x] Test: `x²-2=0` → `sqrt(2)` (10,000-digit check vs tpt-mathr pending the real crate)
@@ -87,7 +87,7 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 
 ## Proposed decisions (recommended; awaiting your OK)
 - [x] `SymbolicFunc`: Sin, Cos, Tan, Asin, Acos, Atan, Sinh, Cosh, Tanh, Exp, Log (natural), Abs. No Sqrt (use `Pow(x, 1/2)`).
-- [x] Like-term/like-factor collection (`x+x→2x`, `x*x→x^2`) happens in canonicalization; expansion and trig identities stay in `simplify`.
+- [x] Like-term/like-factor collection (`x+x→2x`, `x*x→x^2`) happens in canonicalization. Products of sums expand automatically (up to 4096 terms) so the canonical form does not depend on build order; powers of sums and trig identities stay in `simplify`/`expand`.
 - [x] Parser: `^` (accept `**`), implicit multiplication, `=`, `and`/`or`/`not`, ASCII only.
 - [x] Rust edition 2021; MSRV = current stable; licence MIT OR Apache-2.0 (match other TPT repos if different).
 - [x] Other TPT repos are on GitHub: use stubs now, switch to git dependencies once URLs are available.

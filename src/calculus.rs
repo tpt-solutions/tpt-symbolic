@@ -82,6 +82,12 @@ fn diff_raw(e: &Expr, var: &str) -> Result<Expr, Error> {
                 Expr::product(vec![e.clone(), inner])
             }
         }
+        Expr::Func(SymbolicFunc::Log, a) if matches!(&**a, Expr::Func(SymbolicFunc::Abs, _)) => {
+            // d/dx log|t| = t'/t. Taking the chain rule through abs would leave |t|^-2 terms that do not simplify.
+            let Expr::Func(_, t) = &**a else { unreachable!() };
+            let dt = diff_raw(t, var)?;
+            Expr::product(vec![dt, Expr::power((**t).clone(), Expr::int(-1))])
+        }
         Expr::Func(f, a) => {
             let da = diff_raw(a, var)?;
             Expr::product(vec![outer_derivative(*f, a), da])

@@ -376,6 +376,26 @@ mod tests {
     }
 
     #[test]
+    fn random_expressions_parse_back_under_equivalent_spellings() {
+        use crate::testkit::{random_expr, Rng};
+        let mut rng = Rng::new(11);
+        for _ in 0..1000 {
+            let e = random_expr(&mut rng, 4);
+            let s = e.to_string();
+            let variants = [
+                format!("({s})"),
+                format!("{s} + 0"),
+                format!("0 + {s}"),
+                format!("1*({s})"),
+                format!("({s})^1"),
+            ];
+            for v in &variants {
+                assert_eq!(p(v), e, "{v:?} should equal {s:?}");
+            }
+        }
+    }
+
+    #[test]
     fn printed_output_reparses_to_the_same_tree() {
         let samples = [
             "x + 5",

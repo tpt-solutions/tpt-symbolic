@@ -484,6 +484,17 @@ mod tests {
     }
 
     #[test]
+    fn deeper_random_inputs_are_idempotent_and_expand_terminates() {
+        let mut rng = Rng::new(0xC0FFEE);
+        for _ in 0..500 {
+            let e = random_expr(&mut rng, 5);
+            let once = simplify(&e);
+            assert_eq!(simplify(&once), once, "not idempotent for {e}");
+            let _ = expand(&e);
+        }
+    }
+
+    #[test]
     fn terminates_on_nested_chaos() {
         let e = p("sin(cos(tan(x^100)))");
         let _ = simplify(&e);

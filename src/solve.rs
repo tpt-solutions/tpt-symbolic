@@ -86,7 +86,10 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
             coeffs[1].clone(),
         ))]),
         3 => quadratic(&coeffs[2], &coeffs[1], &coeffs[0]),
-        _ => numeric(f, var),
+        _ => match constant_coefficients(&coeffs).and_then(|low| rational_roots(&low)) {
+            Some(roots) => exact_roots(roots),
+            None => numeric(f, var),
+        },
     })
 }
 
@@ -126,6 +129,124 @@ fn exact_roots(mut roots: Vec<Expr>) -> SolveResult {
     roots.sort();
     roots.dedup();
     SolveResult::Exact(roots)
+}
+
+/// Largest divisor the rational-root search will enumerate by trial division.
+const MAX_DIVISOR_SEARCH: u128 = 1_000_000;
+
+fn constant_coefficients(coeffs: &[Expr]) -> Option<Vec<Number>> {
+    coeffs.iter().map(|c| c.as_number()).collect()
+}
+
+/// Exact roots of a polynomial with rational coefficients, lowest degree first.
+///
+/// Peels off rational roots (rational root theorem, then synthetic division)
+/// until degree 2 or less, then applies the quadratic formula to the remainder.
+/// Returns `None` when a remainder of degree 3 or more has no rational root
+/// that the search can find.
+fn rational_roots(low: &[Number]) -> Option<Vec<Expr>> {
+    let mut poly: Vec<Number> = low.iter().rev().copied().collect(); // highest degree first
+    let mut roots = Vec::new();
+    loop {
+        // A zero constant term means a root at zero.
+        while poly.len() > 1 && poly.last()?.is_zero() {
+            poly.pop();
+            roots.push(Expr::zero());
+        }
+        if poly.len() <= 3 {
+            break;
+        }
+        let r = find_rational_root(&poly)?;
+        poly = divide_by_linear(&poly, r)?;
+        roots.push(Expr::Const(r));
+    }
+    match poly.as_slice() {
+        [c] if !c.is_zero() => {}
+        [a1, a0] => roots.push(Expr::Const(a0.checked_div(*a1)?.checked_neg()?)),
+        [a, b, c] => match quadratic(&Expr::Const(*a), &Expr::Const(*b), &Expr::Const(*c)) {
+            SolveResult::Exact(v) => roots.extend(v),
+            SolveResult::NoSolution => {}
+            _ => return None,
+        },
+        _ => return None,
+    }
+    Some(roots)
+}
+
+/// A rational root of `poly` (highest degree first, non-zero constant term), if one is found.
+fn find_rational_root(poly: &[Number]) -> Option<Number> {
+    let ints = integer_scale(poly)?;
+    let constant = ints.last()?.unsigned_abs();
+    let leading = ints.first()?.unsigned_abs();
+    for &p in &divisors(constant)? {
+        for &q in &divisors(leading)? {
+            for sign in [1i128, -1] {
+                let Some(r) = Number::new(sign * p as i128, q as i128) else {
+                    continue;
+                };
+                if eval_is_zero(poly, r) == Some(true) {
+                    return Some(r);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Scales rational coefficients by the lcm of their denominators.
+fn integer_scale(poly: &[Number]) -> Option<Vec<i128>> {
+    let mut lcm: i128 = 1;
+    for c in poly {
+        let d = c.denom();
+        lcm = (lcm / gcd(lcm, d)).checked_mul(d)?;
+    }
+    poly.iter()
+        .map(|c| c.numer().checked_mul(lcm / c.denom()))
+        .collect()
+}
+
+fn divisors(n: u128) -> Option<Vec<u128>> {
+    if n == 0 {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut d: u128 = 1;
+    while d * d <= n {
+        if d > MAX_DIVISOR_SEARCH {
+            return None;
+        }
+        if n.is_multiple_of(d) {
+            out.push(d);
+            if d != n / d {
+                out.push(n / d);
+            }
+        }
+        d += 1;
+    }
+    Some(out)
+}
+
+/// Horner evaluation: whether `poly` (highest degree first) vanishes at `r`.
+fn eval_is_zero(poly: &[Number], r: Number) -> Option<bool> {
+    let mut acc = Number::ZERO;
+    for &c in poly {
+        acc = acc.checked_mul(r)?.checked_add(c)?;
+    }
+    Some(acc.is_zero())
+}
+
+/// Quotient of `poly` (highest degree first) by `x - r`. The remainder is dropped,
+/// so `r` must be a root.
+fn divide_by_linear(poly: &[Number], r: Number) -> Option<Vec<Number>> {
+    let mut out = Vec::with_capacity(poly.len() - 1);
+    let mut acc = Number::ZERO;
+    for (i, &c) in poly.iter().enumerate() {
+        acc = acc.checked_mul(r)?.checked_add(c)?;
+        if i + 1 < poly.len() {
+            out.push(acc);
+        }
+    }
+    Some(out)
 }
 
 fn half() -> Number {
@@ -368,6 +489,23 @@ mod tests {
         let r = solve(&p("x^2 + y^2 = 25"), "y").unwrap();
         let root = p("(25 - x^2)^(1/2)");
         assert_eq!(r, SolveResult::Exact(vec![Expr::negate(root.clone()), root]));
+    }
+
+    #[test]
+    fn cubic_and_quartic_with_rational_roots_are_exact() {
+        assert_eq!(
+            solve(&p("x^3 - 6*x^2 + 11*x - 6 = 0"), "x").unwrap(),
+            SolveResult::Exact(vec![p("1"), p("2"), p("3")])
+        );
+        assert_eq!(
+            solve(&p("x^4 - 5*x^2 + 4 = 0"), "x").unwrap(),
+            SolveResult::Exact(vec![p("-2"), p("-1"), p("1"), p("2")])
+        );
+        // (x - 1)(x^2 - 2): one rational root and a pair of radicals.
+        assert_eq!(
+            solve(&p("x^3 - x^2 - 2*x + 2 = 0"), "x").unwrap(),
+            SolveResult::Exact(vec![p("1"), Expr::negate(p("2^(1/2)")), p("2^(1/2)")])
+        );
     }
 
     #[test]

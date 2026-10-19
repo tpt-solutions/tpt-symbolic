@@ -262,15 +262,27 @@ impl Expr {
             return Expr::zero();
         }
 
-        if out.len() == 1 && !coef.is_one() {
-            if let Expr::Add(terms) = &out[0] {
-                let terms = terms.clone();
-                return Expr::sum(
-                    terms
-                        .into_iter()
-                        .map(|t| Expr::product(vec![Expr::Const(coef), t]))
-                        .collect(),
-                );
+        // Products of sums expand, so the canonical form does not depend on the
+        // order in which a product was built. Expansion stops at MAX_PRODUCT_TERMS;
+        // above that the product stays unexpanded.
+        if let Some(k) = out.iter().position(|f| matches!(f, Expr::Add(_))) {
+            let size = out.iter().try_fold(1usize, |acc, f| match f {
+                Expr::Add(ts) => acc.checked_mul(ts.len()),
+                _ => Some(acc),
+            });
+            if size.is_some_and(|s| s <= MAX_PRODUCT_TERMS) {
+                if let Expr::Add(terms) = out.remove(k) {
+                    let mut expanded = Vec::with_capacity(terms.len());
+                    for t in terms {
+                        let mut fs = out.clone();
+                        fs.push(t);
+                        if !coef.is_one() {
+                            fs.push(Expr::Const(coef));
+                        }
+                        expanded.push(Expr::product(fs));
+                    }
+                    return Expr::sum(expanded);
+                }
             }
         }
 
@@ -430,6 +442,9 @@ impl Expr {
         }
     }
 }
+
+/// Largest number of terms a product of sums is expanded into.
+pub const MAX_PRODUCT_TERMS: usize = 4096;
 
 /// Adds a term to the running constant or to the list of non-constant terms.
 fn absorb_term(t: Expr, constant: &mut Number, flat: &mut Vec<Expr>) {
@@ -784,6 +799,15 @@ mod tests {
         assert_eq!(Expr::or_all(vec![a.clone(), Expr::boolean(true)]), Expr::boolean(true));
         assert_eq!(Expr::logical_not(Expr::logical_not(a.clone())), a);
         assert_eq!(Expr::equation(Expr::int(2), Expr::int(2)), Expr::boolean(true));
+    }
+
+    #[test]
+    fn product_canonical_form_does_not_depend_on_build_order() {
+        let log_y = Expr::func(SymbolicFunc::Log, Expr::var("y"));
+        let sum = Expr::sum(vec![Expr::var("y"), Expr::var("x")]);
+        let direct = Expr::product(vec![Expr::int(-27), sum.clone(), log_y.clone()]);
+        let stepwise = Expr::product(vec![Expr::product(vec![Expr::int(-27), sum]), log_y]);
+        assert_eq!(direct, stepwise);
     }
 
     #[test]
