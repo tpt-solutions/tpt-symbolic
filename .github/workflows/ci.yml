@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo test --all-features
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  no-std:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [wasm32-unknown-unknown, riscv32imac-unknown-none-elf]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --no-default-features --features stub-mathr --target ${{ matrix.target }}
+
+  float-free:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject floating-point types in the crate
+        run: |
+          if grep -rnE '\bf(32|64)\b' src; then
+            echo "floating-point type found in src/; the core must stay exact"
+            exit 1
+          fi

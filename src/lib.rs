@@ -1,11 +1,4 @@
-//! `tpt-symbolic`: exact, pure-Rust symbolic mathematics.
-//!
-//! Expressions are canonicalized on construction, so `a + b` and `b + a` are
-//! the same tree. Constants are exact rationals; no floating point is used
-//! anywhere in the core.
-//!
-//! The crate is `no_std` and needs only `alloc`.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

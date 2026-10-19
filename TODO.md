@@ -14,13 +14,13 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] Module skeleton: `expr`, `simplify`, `calculus`, `solve`
 - [x] Error type (no_std-friendly, no `std::error::Error` unless `std`)
 - [x] Confirm builds for `wasm32-unknown-unknown` and a bare-metal target (e.g. `riscv32imac-unknown-none-elf`)
-- [ ] Enforce: zero C-FFI, zero floats in core AST (CI grep/clippy lint for `f32`/`f64`)
+- [x] Enforce: zero C-FFI, zero floats in core AST (CI grep/clippy lint for `f32`/`f64`)
 
 ## Phase 0b — Dependency stubs
 - [x] `mathr` shim: `Number` (BigInt / Rational / Complex), arithmetic, `Ord`, `Hash`, `Display`
 - [ ] Define the trait surface we need from real tpt-mathr so the swap is mechanical
-- [ ] `uir` shim: serialize/deserialize trait for `Expr`
-- [ ] `testkit` shim: property-test + golden-file helpers (or temporary use of a public crate in dev-deps only)
+- [x] `uir` shim: serialize/deserialize trait for `Expr`
+- [x] `testkit` shim: property-test + golden-file helpers (or temporary use of a public crate in dev-deps only)
 
 ## Phase 1 — AST & Canonicalization (Weeks 1–3)
 - [x] `Expr` enum: `Var(Arc<str>)`, `Const(Number)`, `Add`, `Mul`, `Pow`, `Func`, `Eq`, `And`, `Or`, `Not`, `Bool`
@@ -64,26 +64,26 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] **Milestone:** exact derivatives/integrals for common physics/engineering cases
 
 ## Phase 4 — Solvers & Integration (Weeks 10–12)
-- [ ] `SolveResult` enum (Exact / Parametric / Numeric(SymbolicRoot) / NoSolution / Infinite)
-- [ ] Linear systems: exact Gaussian elimination over `Number`
-- [ ] Polynomial detection + degree/coefficient extraction
-- [ ] Solvers: linear, quadratic, cubic, quartic (radical forms)
-- [ ] Equation isolation for single variable (`x²+y²=25` for `y` → `±sqrt(25-x²)`)
-- [ ] `SymbolicRoot` for transcendental equations (Newton–Raphson hand-off to tpt-math)
-- [ ] Test: `x²-2=0` → `sqrt(2)`; 10,000-digit check vs tpt-mathr
+- [x] `SolveResult` enum (Exact / Parametric / Numeric(SymbolicRoot) / NoSolution / Infinite)
+- [x] Linear systems: exact Gaussian elimination over `Number`
+- [x] Polynomial detection + degree/coefficient extraction
+- [ ] Solvers: linear, quadratic, cubic, quartic (radical forms) — linear and quadratic done; cubic and quartic pending
+- [x] Equation isolation for single variable (`x²+y²=25` for `y` → `±sqrt(25-x²)`)
+- [x] `SymbolicRoot` for transcendental equations (Newton–Raphson hand-off to tpt-math)
+- [x] Test: `x²-2=0` → `sqrt(2)` (10,000-digit check vs tpt-mathr pending the real crate)
 - [ ] tpt-vertex integration: CAD constraint pipeline example (distance = 5)
-- [ ] tpt-chemistry integration: balance `C3H8 + O2 → CO2 + H2O` as integer nullspace
+- [ ] tpt-chemistry integration: balance `C3H8 + O2 → CO2 + H2O` as integer nullspace — the nullspace core is done and tested; wiring into tpt-chemistry is blocked on that repo
 - [ ] tpt-concord integration: boolean satisfiability/contradiction check API
 - [ ] tpt-math hand-off: AST export for numeric compilation
-- [ ] Docs, examples, API review
-- [ ] Publish v1.0.0
+- [ ] Docs, examples, API review — README and pipeline doctest done; API review pending
+- [ ] Publish v1.0.0 — excluded by you (not published)
 
 ## Cross-cutting quality
-- [ ] Property tests for identities (via testkit)
-- [ ] Fuzz targets for parser and simplifier with time limits
+- [x] Property tests for identities (via testkit)
+- [ ] Fuzz targets for parser and simplifier with time limits — seeded random tests done; time-limited fuzzing pending
 - [ ] Benchmarks on large expressions
-- [ ] `no_std` CI matrix (native, wasm32, riscv)
-- [ ] Rustdoc for every public item; README with pipeline example
+- [x] `no_std` CI matrix (native, wasm32, riscv)
+- [x] Rustdoc for every public item; README with pipeline example
 
 ## Proposed decisions (recommended; awaiting your OK)
 - [x] `SymbolicFunc`: Sin, Cos, Tan, Asin, Acos, Atan, Sinh, Cosh, Tanh, Exp, Log (natural), Abs. No Sqrt (use `Pow(x, 1/2)`).
