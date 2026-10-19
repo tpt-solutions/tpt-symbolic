@@ -99,6 +99,12 @@ pub const RULES: &[Rule] = &[
         apply: rule_tan_definition,
     },
     Rule {
+        name: "tanh-definition",
+        priority: 80,
+        category: Category::Trigonometric,
+        apply: rule_tanh_definition,
+    },
+    Rule {
         name: "inverse-log-exp",
         priority: 80,
         category: Category::Exponential,
@@ -176,7 +182,7 @@ fn simplify_with_passes(e: &Expr, max_passes: usize) -> (Expr, bool) {
 /// Number of levels in the tree, counting a leaf as 1.
 fn tree_depth(e: &Expr) -> usize {
     match e {
-        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) => 1,
+        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E => 1,
         Expr::Add(v) | Expr::Mul(v) | Expr::And(v) | Expr::Or(v) => {
             1 + v.iter().map(tree_depth).max().unwrap_or(0)
         }
@@ -191,7 +197,7 @@ fn pass(e: &Expr, depth: usize) -> Expr {
     }
     let d = depth + 1;
     let rebuilt = match e {
-        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) => return e.clone(),
+        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E => return e.clone(),
         Expr::Add(v) => Expr::sum(v.iter().map(|t| pass(t, d)).collect()),
         Expr::Mul(v) => Expr::product(v.iter().map(|t| pass(t, d)).collect()),
         Expr::Pow(b, x) => Expr::power(pass(b, d), pass(x, d)),
@@ -342,28 +348,50 @@ fn rule_even_power_of_abs(e: &Expr) -> Option<Expr> {
 
 /// `sin(a) * cos(a)^-1` becomes `tan(a)`.
 fn rule_tan_definition(e: &Expr) -> Option<Expr> {
+    ratio_definition(e, SymbolicFunc::Sin, SymbolicFunc::Cos, SymbolicFunc::Tan)
+}
+
+/// `sinh(a) * cosh(a)^-1` becomes `tanh(a)`.
+fn rule_tanh_definition(e: &Expr) -> Option<Expr> {
+    ratio_definition(
+        e,
+        SymbolicFunc::Sinh,
+        SymbolicFunc::Cosh,
+        SymbolicFunc::Tanh,
+    )
+}
+
+/// Rewrites `num(a) * den(a)^-1` as `out(a)` inside a product.
+fn ratio_definition(
+    e: &Expr,
+    num: SymbolicFunc,
+    den: SymbolicFunc,
+    out: SymbolicFunc,
+) -> Option<Expr> {
     let Expr::Mul(v) = e else { return None };
     for (i, f) in v.iter().enumerate() {
-        let Expr::Func(SymbolicFunc::Sin, a) = f else {
+        let Expr::Func(f_name, a) = f else {
             continue;
         };
+        if *f_name != num {
+            continue;
+        }
         for (j, g) in v.iter().enumerate() {
             if i == j {
                 continue;
             }
             let Expr::Pow(base, exp) = g else { continue };
-            let is_inv_cos = exp.as_number() == Some(Number::neg_one())
-                && matches!(&**base, Expr::Func(SymbolicFunc::Cos, b) if b == a);
-            if is_inv_cos {
-                let rest: Vec<Expr> = v
+            let is_inv_den = exp.as_number() == Some(Number::neg_one())
+                && matches!(&**base, Expr::Func(d, b) if *d == den && b == a);
+            if is_inv_den {
+                let mut rest: Vec<Expr> = v
                     .iter()
                     .enumerate()
                     .filter(|(k, _)| *k != i && *k != j)
                     .map(|(_, t)| t.clone())
                     .collect();
-                let mut out = rest;
-                out.push(Expr::func(SymbolicFunc::Tan, (**a).clone()));
-                return Some(Expr::product(out));
+                rest.push(Expr::func(out, (**a).clone()));
+                return Some(Expr::product(rest));
             }
         }
     }
@@ -486,7 +514,7 @@ fn rule_de_morgan(e: &Expr) -> Option<Expr> {
 /// is wanted.
 pub fn expand(e: &Expr) -> Expr {
     match e {
-        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) => e.clone(),
+        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) | Expr::Pi | Expr::E => e.clone(),
         Expr::Add(v) => Expr::sum(v.iter().map(expand).collect()),
         Expr::Mul(v) => expand_product(e, v),
         Expr::Pow(b, x) => {
@@ -565,6 +593,13 @@ mod tests {
         assert_eq!(s("cos(0)"), Expr::one());
         assert_eq!(s("log(1)"), Expr::zero());
         assert_eq!(s("abs(-3)"), Expr::int(3));
+    }
+
+    #[test]
+    fn hyperbolic_ratio_becomes_tanh() {
+        assert_eq!(simplify(&s("sinh(x)*cosh(x)^-1")), simplify(&s("tanh(x)")));
+        // The tan rule still fires for the circular functions.
+        assert_eq!(simplify(&s("sin(x)*cos(x)^-1")), simplify(&s("tan(x)")));
     }
 
     #[test]

@@ -58,6 +58,7 @@ pub fn diff(e: &Expr, var: &str) -> Result<Expr, Error> {
 
 fn diff_raw(e: &Expr, var: &str) -> Result<Expr, Error> {
     Ok(match e {
+        Expr::Pi | Expr::E => Expr::zero(),
         Expr::Var(n) => {
             if &**n == var {
                 Expr::one()
@@ -206,6 +207,13 @@ fn structural(e: &Expr, var: &str, depth: usize) -> Option<Expr> {
         Expr::Mul(v) => {
             let (consts, vars): (Vec<Expr>, Vec<Expr>) =
                 v.iter().cloned().partition(|f| !f.contains_var(var));
+            if vars.len() == 2 {
+                let body = by_parts(&vars[0], &vars[1], var, depth)
+                    .or_else(|| by_parts(&vars[1], &vars[0], var, depth))?;
+                let mut factors = consts;
+                factors.push(body);
+                return Some(Expr::product(factors));
+            }
             if vars.len() != 1 {
                 return None;
             }
@@ -222,6 +230,36 @@ fn structural(e: &Expr, var: &str, depth: usize) -> Option<Expr> {
         }
         _ => None,
     }
+}
+
+/// Integration by parts for `∫ p(x) g(x) dx` when `p = x^n` with a positive integer `n`
+/// and `g` has a basic antiderivative `G`:
+///
+/// `∫ p g dx = p G - ∫ p' G dx`, where `p' = n x^(n-1)`.
+///
+/// The recursion lowers `n` each step, so it ends at `n = 0`, or at the depth limit.
+fn by_parts(p: &Expr, g: &Expr, var: &str, depth: usize) -> Option<Expr> {
+    if depth >= MAX_SUB_DEPTH {
+        return None;
+    }
+    let n = match p {
+        Expr::Var(v) if &**v == var => 1,
+        Expr::Pow(b, x) if matches!(&**b, Expr::Var(v) if &**v == var) => {
+            x.as_number()?.as_i128().filter(|&k| k >= 1)?
+        }
+        _ => return None,
+    };
+    let big_g = antideriv(g, var, depth)?;
+    let rest = simplify(&Expr::product(vec![
+        Expr::int(n),
+        Expr::power(Expr::var(var), Expr::int(n - 1)),
+        big_g.clone(),
+    ]));
+    let second = antideriv(&rest, var, depth + 1)?;
+    Some(Expr::difference(
+        Expr::product(vec![p.clone(), big_g]),
+        second,
+    ))
 }
 
 /// `∫ b^n dx` for a linear base `b` and a constant exponent `n`.
@@ -249,6 +287,8 @@ fn basic_antiderivative(f: SymbolicFunc, t: Expr) -> Option<Expr> {
         SymbolicFunc::Exp => Expr::func(SymbolicFunc::Exp, t),
         SymbolicFunc::Sinh => Expr::func(SymbolicFunc::Cosh, t),
         SymbolicFunc::Cosh => Expr::func(SymbolicFunc::Sinh, t),
+        // ∫ tanh t dt = ln(cosh t). cosh is positive, so no absolute value is needed.
+        SymbolicFunc::Tanh => Expr::func(SymbolicFunc::Log, Expr::func(SymbolicFunc::Cosh, t)),
         SymbolicFunc::Tan => Expr::negate(Expr::func(
             SymbolicFunc::Log,
             Expr::func(SymbolicFunc::Abs, Expr::func(SymbolicFunc::Cos, t)),
@@ -463,6 +503,52 @@ mod tests {
                 other => panic!("{src}: expected an exact antiderivative, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn integration_by_parts_for_polynomial_times_basic_function() {
+        for src in [
+            "x*sin(x)",
+            "x*cos(x)",
+            "x*exp(x)",
+            "x^2*exp(x)",
+            "x^3*sin(x)",
+            "x*cos(2*x)",
+        ] {
+            match integrate(&p(src), "x") {
+                Integral::Exact(f) => {
+                    assert_eq!(
+                        simplify(&diff(&f, "x").unwrap()),
+                        simplify(&p(src)),
+                        "{src}"
+                    );
+                }
+                other => panic!("{src}: expected an exact antiderivative, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn tanh_antiderivative_is_verified_exact() {
+        // ∫ tanh x dx = ln(cosh x), checked by differentiating back.
+        match integrate(&p("tanh(x)"), "x") {
+            Integral::Exact(f) => {
+                assert_eq!(simplify(&diff(&f, "x").unwrap()), simplify(&p("tanh(x)")));
+            }
+            other => panic!("expected an exact antiderivative, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pi_and_e_are_constants_not_variables() {
+        // d/dx (pi * x^2) = 2*pi*x, and pi is not treated as the unknown.
+        assert_eq!(
+            simplify(&diff(&p("pi*x^2"), "x").unwrap()),
+            simplify(&p("2*pi*x"))
+        );
+        assert!(!p("pi + e").contains_var("pi"));
+        assert_eq!(p("pi + e").to_string(), "pi + e");
+        assert!(crate::eval::eval(&p("pi"), &[]).is_err());
     }
 
     #[test]

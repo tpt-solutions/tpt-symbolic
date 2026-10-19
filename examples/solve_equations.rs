@@ -29,6 +29,16 @@ fn main() {
             SolveResult::NoSolution => String::from("no real solution"),
             SolveResult::Numeric(root) => format!("numeric hand-off for {}", root.expr),
             SolveResult::Parametric => String::from("depends on free parameters"),
+            SolveResult::Conditional(e) => format!("holds only when {e} = 0"),
+            SolveResult::Partial { exact, rest } => format!(
+                "exact roots {}; numeric hand-off for {}",
+                exact
+                    .iter()
+                    .map(|r| r.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" , "),
+                rest.expr
+            ),
             SolveResult::Infinite => String::from("every value"),
             _ => String::from("unrecognised result"),
         };

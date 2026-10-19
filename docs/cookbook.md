@@ -124,11 +124,22 @@ assert_eq!(to_latex(&parse("x/2").unwrap()), "\\frac{x}{2}");
 ## Report a parse error with its position
 
 ```rust
-use tpt_symbolic::error::Error;
+use tpt_symbolic::error::{line_col, Error};
 use tpt_symbolic::parse::parse;
 
-match parse("foo(x)") {
-    Err(Error::Parse { pos, message }) => assert_eq!(pos, 3),
+// A misspelt function name gets a suggestion and the position of the name.
+match parse("sni(x)") {
+    Err(Error::UnknownFunction { pos, name, suggestion }) => {
+        assert_eq!(name, "sni");
+        assert_eq!(suggestion, Some("sin"));
+        assert_eq!(line_col("sni(x)", pos), (1, 1));
+    }
+    other => panic!("expected an unknown-function error, got {other:?}"),
+}
+
+// Any other syntax error is `Error::Parse`, with a byte offset.
+match parse("2 * )") {
+    Err(Error::Parse { pos, .. }) => assert_eq!(line_col("2 * )", pos), (1, 5)),
     other => panic!("expected a parse error, got {other:?}"),
 }
 ```

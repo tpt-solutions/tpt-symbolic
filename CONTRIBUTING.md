@@ -21,7 +21,7 @@ keep them canonical?
 cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
-cargo test --no-default-features --features stub-mathr
+cargo test --features std
 ```
 
 Also run the examples you affect with `cargo run --example <name>`.

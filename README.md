@@ -59,9 +59,11 @@ cargo run -- latex "x/2"                # \frac{x}{2}
 | `true`, `false`         | logical constants                               |
 | `sin(x)`, `log(x)`, ... | built-in functions: `sin cos tan asin acos atan sinh cosh tanh exp log abs` |
 | `sqrt(x)`               | same as `x^(1/2)`                               |
+| `pi`, `e`               | the constants π and Euler's number (not variables; `eval` refuses them) |
 
 A name followed directly by `(` must be a built-in function. Anything else is
-an error, so `foo(x)` is rejected rather than read as `foo*x`. Names are ASCII
+an error, so `foo(x)` is rejected rather than read as `foo*x`. A likely typo
+such as `sni(x)` also gets a "did you mean" suggestion. Names are ASCII
 identifiers, and a multi-letter name is one variable: `xy` is not `x*y`.
 
 ## Exact and approximate
@@ -74,6 +76,8 @@ identifiers, and a multi-letter name is one variable: `xy` is not `x*y`.
 | `to_decimal(n, digits)`          | decimal digits, **truncated** (not rounded)      |
 | `solve` (degree 1, 2, rational roots, `x^n = c`) | exact radicals such as `2^(1/3)`  |
 | `solve` (anything else)          | `SolveResult::Numeric`, a hand-off for numeric root-finding |
+| `solve` (some rational roots)    | `SolveResult::Partial`: the exact roots, plus a numeric hand-off for the rest |
+| `solve` (no unknown in the equation) | `SolveResult::Conditional`, the expression that must vanish |
 
 Nothing rounds on its own. An irrational value stays symbolic until you ask for
 digits, and then only the digits you ask for are produced.
@@ -97,7 +101,6 @@ digits, and then only the digits you ask for are produced.
 
 | feature       | default | purpose                                                    |
 |---------------|---------|------------------------------------------------------------|
-| `stub-mathr`  | yes     | local exact-number shim, standing in for `tpt-mathr`       |
 | `std`         | no      | `std::error::Error` impl for `Error`                       |
 | `uir`         | no      | text IR codec (`UirCodec`), standing in for `tpt-uir`      |
 | `testkit`     | no      | deterministic random-expression generator for property tests |

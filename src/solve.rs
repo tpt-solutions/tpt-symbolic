@@ -45,9 +45,20 @@ pub struct SymbolicRoot {
 pub enum SolveResult {
     /// Every solution, in exact form, sorted and without duplicates.
     Exact(Vec<Expr>),
-    /// Solutions depend on parameters that were not fixed. The equation has
-    /// no variable-free solution and no closed form was produced.
+    /// Solutions depend on free unknowns other than the one being solved for.
+    /// Produced by [`solve_linear_system`].
     Parametric,
+    /// The equation contains no unknown. It holds exactly when `Conditional(e)`
+    /// is zero, where `e` is the expression returned here.
+    Conditional(Expr),
+    /// Some roots are exact. The remaining factor has no closed form here and is
+    /// handed off to numeric root-finding.
+    Partial {
+        /// Exact roots, sorted and without duplicates.
+        exact: Vec<Expr>,
+        /// The remaining factor, to be solved numerically.
+        rest: SymbolicRoot,
+    },
     /// No closed form. Hand off to numeric root-finding.
     Numeric(SymbolicRoot),
     /// No real solution.
@@ -74,7 +85,7 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
         return Ok(match f.as_number() {
             Some(n) if n.is_zero() => SolveResult::Infinite,
             Some(_) => SolveResult::NoSolution,
-            None => SolveResult::Parametric,
+            None => SolveResult::Conditional(f.clone()),
         });
     }
     let Some(coeffs) = poly_coeffs(&f, var) else {
@@ -95,8 +106,9 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
         ))]),
         3 => quadratic(&coeffs[2], &coeffs[1], &coeffs[0]),
         _ => match constant_coefficients(&coeffs).and_then(|low| rational_roots(&low)) {
-            Some(roots) => exact_roots(roots),
-            None => numeric(f, var),
+            Some(Split::Exact(roots)) => exact_roots(roots),
+            Some(Split::Partial { roots, rest }) if !roots.is_empty() => partial(roots, &rest, var),
+            _ => numeric(f, var),
         },
     })
 }
@@ -158,13 +170,22 @@ fn constant_coefficients(coeffs: &[Expr]) -> Option<Vec<Number>> {
     coeffs.iter().map(|c| c.as_number()).collect()
 }
 
+/// Result of peeling roots off a polynomial.
+enum Split {
+    /// Every root is exact.
+    Exact(Vec<Expr>),
+    /// The exact `roots` were found; `rest` (highest degree first) has no closed
+    /// form that the search can find.
+    Partial { roots: Vec<Expr>, rest: Vec<Number> },
+}
+
 /// Exact roots of a polynomial with rational coefficients, lowest degree first.
 ///
 /// Peels off rational roots (rational root theorem, then synthetic division)
 /// until degree 2 or less, then applies the quadratic formula to the remainder.
-/// Returns `None` when a remainder of degree 3 or more has no rational root
-/// that the search can find.
-fn rational_roots(low: &[Number]) -> Option<Vec<Expr>> {
+/// Returns `None` only for shapes the search does not handle at all. A remainder
+/// of degree 3 or more with no closed form is returned as [`Split::Partial`].
+fn rational_roots(low: &[Number]) -> Option<Split> {
     let mut poly: Vec<Number> = low.iter().rev().cloned().collect(); // highest degree first
     let mut roots = Vec::new();
     loop {
@@ -177,10 +198,17 @@ fn rational_roots(low: &[Number]) -> Option<Vec<Expr>> {
             break;
         }
         let Some(r) = find_rational_root(&poly) else {
-            // No rational root. A pure power equation `a*x^n + c = 0` still has
-            // exact real roots, so use those; anything else stays numeric.
-            roots.extend(pure_power_roots(&poly)?);
-            return Some(roots);
+            // No rational root. A pure power or biquadratic equation still has
+            // exact real roots, so use those; anything else is a partial result.
+            return Some(
+                match pure_power_roots(&poly).or_else(|| biquadratic_roots(&poly)) {
+                    Some(more) => {
+                        roots.extend(more);
+                        Split::Exact(roots)
+                    }
+                    None => Split::Partial { roots, rest: poly },
+                },
+            );
         };
         poly = divide_by_linear(&poly, &r)?;
         roots.push(Expr::Const(r));
@@ -199,7 +227,33 @@ fn rational_roots(low: &[Number]) -> Option<Vec<Expr>> {
         },
         _ => return None,
     }
-    Some(roots)
+    Some(Split::Exact(roots))
+}
+
+/// Builds [`SolveResult::Partial`] from exact `roots` and the unsolved factor `rest`
+/// (highest degree first).
+fn partial(mut roots: Vec<Expr>, rest: &[Number], var: &str) -> SolveResult {
+    roots.sort();
+    roots.dedup();
+    // Scale to a monic factor. The zeros are unchanged, and the sign of the
+    // leading coefficient depends on how the equation was arranged.
+    let lead = &rest[0];
+    let top = rest.len() - 1;
+    let terms = rest.iter().enumerate().map(|(i, c)| {
+        let c = c.checked_div(lead).unwrap_or_else(|| c.clone());
+        Expr::product(vec![
+            Expr::Const(c),
+            Expr::power(Expr::var(var), Expr::int((top - i) as i128)),
+        ])
+    });
+    let expr = simplify(&Expr::sum(terms.collect()));
+    SolveResult::Partial {
+        exact: roots,
+        rest: SymbolicRoot {
+            expr,
+            var: Arc::from(var),
+        },
+    }
 }
 
 /// Real roots of `a*x^n + c = 0` (highest degree first, `n >= 3`), in exact form.
@@ -230,6 +284,90 @@ fn pure_power_roots(poly: &[Number]) -> Option<Vec<Expr>> {
         return Some(Vec::new());
     }
     Some(vec![root.clone(), Expr::negate(root)])
+}
+
+/// Real roots of `a*x^4 + b*x^2 + c = 0` (highest degree first), in exact form.
+///
+/// Substitutes `u = x^2`, solves `a*u^2 + b*u + c = 0` exactly, then takes `x = ±sqrt(u)`
+/// for each non-negative `u`. Returns `None` for any other shape.
+fn biquadratic_roots(poly: &[Number]) -> Option<Vec<Expr>> {
+    if poly.len() != 5 || !poly[1].is_zero() || !poly[3].is_zero() {
+        return None;
+    }
+    let (a, b, c) = (&poly[0], &poly[2], &poly[4]);
+    if a.is_zero() {
+        return None;
+    }
+    let disc = b
+        .checked_mul(b)?
+        .checked_sub(&a.checked_mul(c)?.checked_mul(&Number::from_int(4))?)?;
+    if disc.is_negative() {
+        // Complex u gives no real x.
+        return Some(Vec::new());
+    }
+    let neg_b = b.checked_neg()?;
+    let two_a = a.checked_mul(&Number::from_int(2))?;
+    let root = simplify(&Expr::power(Expr::Const(disc.clone()), Expr::Const(half())));
+    let mut roots = Vec::new();
+    for sigma in [1i128, -1] {
+        // Sign of u = (-b + sigma*sqrt(disc)) / (2a), decided exactly.
+        let sign = sign_of_sum_with_root(&neg_b, &disc, sigma)?;
+        let u_sign = if a.is_negative() { -sign } else { sign };
+        if u_sign < 0 {
+            continue;
+        }
+        if u_sign == 0 {
+            roots.push(Expr::zero());
+            continue;
+        }
+        let u_num = Expr::sum(vec![
+            Expr::Const(neg_b.clone()),
+            Expr::product(vec![Expr::int(sigma), root.clone()]),
+        ]);
+        let u = simplify(&Expr::quotient(u_num, Expr::Const(two_a.clone())));
+        let x = simplify(&Expr::power(u, Expr::Const(half())));
+        roots.push(Expr::negate(x.clone()));
+        roots.push(x);
+    }
+    Some(roots)
+}
+
+/// Sign (-1, 0 or 1) of `s + sigma*sqrt(d)` for rational `s`, `d >= 0` and `sigma` = ±1.
+fn sign_of_sum_with_root(s: &Number, d: &Number, sigma: i128) -> Option<i32> {
+    if d.is_zero() || s.is_zero() {
+        // s + sigma*sqrt(d) = sigma*sqrt(d) when s = 0.
+        return Some(if d.is_zero() { s_sign(s) } else { sigma as i32 });
+    }
+    let s_pos = !s.is_negative();
+    if s_pos == (sigma > 0) {
+        // Both terms share a sign.
+        return Some(if s_pos { 1 } else { -1 });
+    }
+    // Opposite signs: compare |s| with sqrt(d) through squares.
+    let s_sq = s.checked_mul(s)?;
+    Some(match s_sq.cmp_value(d) {
+        core::cmp::Ordering::Equal => 0,
+        // |s| > sqrt(d): the sign of s wins.
+        core::cmp::Ordering::Greater => {
+            if s_pos {
+                1
+            } else {
+                -1
+            }
+        }
+        // |s| < sqrt(d): the sqrt term wins.
+        core::cmp::Ordering::Less => sigma as i32,
+    })
+}
+
+fn s_sign(s: &Number) -> i32 {
+    if s.is_zero() {
+        0
+    } else if s.is_negative() {
+        -1
+    } else {
+        1
+    }
 }
 
 /// A rational root of `poly` (highest degree first, non-zero constant term), if one is found.
@@ -265,12 +403,12 @@ fn integer_scale(poly: &[Number]) -> Option<Vec<BigInt>> {
     let mut lcm = BigInt::one();
     for c in poly {
         let d = c.denom();
-        let (q, _) = lcm.divrem(&lcm.gcd(d))?;
-        lcm = q.mul(d);
+        let (q, _) = lcm.divrem(&lcm.gcd(&d))?;
+        lcm = q.mul(&d);
     }
     poly.iter()
         .map(|c| {
-            let (factor, _) = lcm.divrem(c.denom())?;
+            let (factor, _) = lcm.divrem(&c.denom())?;
             Some(c.numer().mul(&factor))
         })
         .collect()
@@ -494,13 +632,13 @@ pub fn primitive_integer_vector(v: &[Number]) -> Result<Vec<i128>, Error> {
     let mut lcm = BigInt::one();
     for x in v {
         let (q, _) = lcm
-            .divrem(&lcm.gcd(x.denom()))
+            .divrem(&lcm.gcd(&x.denom()))
             .ok_or(Error::DivisionByZero)?;
-        lcm = q.mul(x.denom());
+        lcm = q.mul(&x.denom());
     }
     let mut ints: Vec<BigInt> = Vec::with_capacity(v.len());
     for x in v {
-        let (factor, _) = lcm.divrem(x.denom()).ok_or(Error::DivisionByZero)?;
+        let (factor, _) = lcm.divrem(&x.denom()).ok_or(Error::DivisionByZero)?;
         ints.push(x.numer().mul(&factor));
     }
     let g = ints.iter().fold(BigInt::zero(), |acc, x| acc.gcd(x));
@@ -598,7 +736,11 @@ mod tests {
             solve(&p("x^2 + 1 = 0"), "x").unwrap(),
             SolveResult::NoSolution
         );
-        assert_eq!(solve(&p("a = 0"), "x").unwrap(), SolveResult::Parametric);
+        // No unknown in the equation: it holds when `a` is zero.
+        assert_eq!(
+            solve(&p("a = 0"), "x").unwrap(),
+            SolveResult::Conditional(simplify(&p("a")))
+        );
     }
 
     #[test]
@@ -612,6 +754,48 @@ mod tests {
             solve(&p("x^3 + x + 1 = 0"), "x").unwrap(),
             SolveResult::Numeric(_)
         ));
+    }
+
+    #[test]
+    fn partial_roots_keep_the_exact_part() {
+        // (x - 1)(x^3 + x + 1): x = 1 is exact; the cubic factor is handed off.
+        match solve(&p("x^4 - x^3 + x^2 - 1 = 0"), "x").unwrap() {
+            SolveResult::Partial { exact, rest } => {
+                assert_eq!(exact, vec![Expr::int(1)]);
+                assert_eq!(rest.var.as_ref(), "x");
+                assert_eq!(rest.expr, simplify(&p("x^3 + x + 1")));
+            }
+            other => panic!("expected a partial result, got {other:?}"),
+        }
+        // A quartic with no rational root and no closed form stays numeric.
+        assert!(matches!(
+            solve(&p("x^5 + x + 1 = 0"), "x").unwrap(),
+            SolveResult::Numeric(_)
+        ));
+    }
+
+    #[test]
+    fn biquadratic_equations_have_exact_real_roots() {
+        // x^4 - 3x^2 + 1: u = (3 ± sqrt5)/2, both positive, so four real roots.
+        match solve(&p("x^4 - 3*x^2 + 1 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => assert_eq!(v.len(), 4),
+            other => panic!("expected exact roots, got {other:?}"),
+        }
+        // x^4 + x^2 + 1: u is complex, so no real roots.
+        assert_eq!(
+            solve(&p("x^4 + x^2 + 1 = 0"), "x").unwrap(),
+            SolveResult::NoSolution
+        );
+        // x^4 - x^2 - 2 = (x^2 - 2)(x^2 + 1): only ±sqrt(2) are real.
+        match solve(&p("x^4 - x^2 - 2 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => assert_eq!(v.len(), 2),
+            other => panic!("expected exact roots, got {other:?}"),
+        }
+        // x^4 - 2x^2 = 0: u = 0 or 2, so x = 0 and ±sqrt(2).
+        match solve(&p("x^4 - 2*x^2 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => assert_eq!(v.len(), 3),
+            other => panic!("expected exact roots, got {other:?}"),
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 
 ## Phase 0 — Project setup
 - [x] Create Cargo crate `tpt-symbolic` (`#![no_std]` + `extern crate alloc`)
-- [x] Feature flags: `std` (off by default), `stub-mathr`, `uir`, `testkit`
+- [x] Feature flags: `std` (off by default), `uir`, `testkit` (`stub-mathr` was removed by the tpt-mathr swap)
 - [x] Module skeleton: `expr`, `simplify`, `calculus`, `solve`
 - [x] Error type (no_std-friendly, no `std::error::Error` unless `std`)
 - [x] Confirm builds for `wasm32-unknown-unknown` and a bare-metal target (e.g. `riscv32imac-unknown-none-elf`)
@@ -71,9 +71,9 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] Equation isolation for single variable (`x²+y²=25` for `y` → `±sqrt(25-x²)`)
 - [x] `SymbolicRoot` for transcendental equations (Newton–Raphson hand-off to tpt-math)
 - [x] Test: `x²-2=0` → `sqrt(2)`; 10,000-digit check via exact integer sqrt (`bigint::tests::sqrt2_to_ten_thousand_decimal_places`), not tpt-mathr
-- [ ] (deferred) tpt-vertex integration: CAD constraint pipeline example (distance = 5)
-- [ ] (deferred) tpt-chemistry integration: balance `C3H8 + O2 → CO2 + H2O` as integer nullspace — the nullspace core is done and tested; `examples/balance_chemistry.rs` demonstrates it locally; wiring into tpt-chemistry is blocked on that repo
-- [ ] (deferred) tpt-concord integration: boolean satisfiability/contradiction check API
+- [-] tpt-vertex integration: dropped by the user; not planned
+- [-] tpt-chemistry integration: dropped by the user; not planned
+- [-] tpt-concord integration: dropped by the user; not planned
 - [ ] (deferred) tpt-math hand-off: AST export for numeric compilation
 - [x] Docs, examples, API review — README and pipeline doctest done; API review done (growable enums marked `#[non_exhaustive]`)
 - [ ] Publish v1.0.0 — excluded by you (not published)
@@ -93,7 +93,8 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] Other TPT repos are on GitHub: use stubs now, switch to git dependencies once URLs are available.
 
 ## Still needed from you
-- [ ] GitHub URLs for tpt-mathr, tpt-uir, tpt-testkit (and tpt-vertex / tpt-chemistry / tpt-concord / tpt-math). Also needed for `repository` and `documentation` in `Cargo.toml`.
+- [x] GitHub URLs for tpt-mathr, tpt-uir, tpt-testkit (all under `github.com/tpt-solutions/`; tpt-math is there too). `repository` and `documentation` are set in `Cargo.toml`
+- [x] Swap the stubs for the real crates. `Number` now wraps `tpt-mathr-arith`'s `BigRat` (pinned git revision `f736d3e`). The `no_std` arithmetic crate is used directly, because the facade `tpt-mathr` is std-only and does not build for riscv. `numer()` and `denom()` now return owned values of our `BigInt` (breaking, allowed while unpublished). The `stub-mathr` feature and its compile gate are gone. Not swapped, by decision: `tpt-testkit` (needs Rust 1.97, above the 1.87 MSRV) and `tpt-uir` (its IR is not our `Expr`). Performance: the first swap was 1.4x to 2x slower than the stub. Caching the integer conversions (`i64` fast paths for `numer`, `denom`, `new`, `from_parts`, `as_i128`, `is_integer`, `is_one`) brought it below the stub: `examples/bench.rs` in release now gives diff of the 500-term sum 24 ms (stub 36 ms), simplify 5.8 ms (stub 8.8 ms), expand 5.5 ms (stub 7.9 ms), solve 0.76 ms (stub 1.0 ms). Git dependencies block crates.io publishing, so this must be settled before any publish. tpt-vertex, tpt-chemistry and tpt-concord URLs are still missing
 - [x] Licence used by the other TPT repos (MIT OR Apache-2.0; LICENSE-MIT and LICENSE-APACHE added)
 - [x] Decisions for the review items marked "decision" below: the conservative option was taken for each, so no public API change and no new dependency. Partial solver roots, the `Parametric` split, `pi`/`e` constants, and `serde` remain open for later work
 
@@ -114,24 +115,24 @@ has a test or was checked by hand.
 - [x] `expand_product` checks `MAX_EXPAND_TERMS` before allocating (hardening)
 - [x] `negate_term` no longer indexes into an empty `Mul` (hardening; not reached by canonical trees in testing)
 - [x] `diff`, `integrate` and `solve` reject `And`/`Or`/`Not`/`Eq`/`Bool` operands with `Unsupported`. A top-level `true`/`false` in `solve` still means always/never
-- [ ] Solver: keep partial rational roots when the remaining factor has none — **decision**: needs a new `SolveResult` variant, because today the whole equation falls back to `Numeric`
-- [ ] Solver: general biquadratic substitution (pure powers `x^n = c` are done; `x^4 + x^2 - 2` is not)
+- [x] Solver: keep partial rational roots when the remaining factor has none. New `SolveResult::Partial { exact, rest }` (non-breaking: `SolveResult` is `#[non_exhaustive]`)
+- [x] Solver: general biquadratic substitution (`a·x^4 + b·x^2 + c`, solved exactly in `u = x^2`; signs of irrational `u` decided exactly; tests in `biquadratic_equations_have_exact_real_roots`)
 - [x] Solver: `divisors(leading)` is computed once, outside the loop
-- [ ] Split the overloaded `Parametric` result (free unknowns vs. "does not contain the variable") — **decision**: changes the public meaning of a variant
+- [x] Split the overloaded `Parametric` result. The "no unknown in the equation" case is now `SolveResult::Conditional(expr)`. `Parametric` is kept for free unknowns in linear systems. The variant's meaning is narrower, so callers that matched `Parametric` for `a = 0` now get `Conditional`. The enum is `#[non_exhaustive]`, so the addition itself is not breaking, but this behaviour change should be noted (it is in CHANGELOG)
 - [x] `simplify_checked` reports non-convergence and over-deep trees. `simplify` is unchanged
 - [x] Integration substitution symbol is chosen so it can't clash with the variable or a name in the integrand (no wrong answer found in testing)
 - [x] `Expr` and `SymbolicFunc` are `#[non_exhaustive]`
 - [x] `Number::cmp_value` gives the numeric order; the derived `Ord` stays structural
 - [x] Removed the `unreachable!` in `calculus.rs`. Stale comments fixed in `bigint.rs` and `expr.rs`. The review's `expr.rs:188` and `:455` were not stale on inspection, so they are unchanged
 - [x] `sqrt` folds perfect squares above the 10^4 bound (`sqrt(10007^2)` is `10007`)
-- [ ] Performance: the binary gcd in `Number::from_parts`, the quadratic like-term grouping and the trial division in `sqrt_const` are not yet measured or changed. The benches need to show a cost first
+- [ ] Performance: the binary gcd in `Number::from_parts`, the quadratic like-term grouping and the trial division in `sqrt_const` are not changed. `examples/bench.rs` (release build) gives simplify of a 500-term sum 8.8 ms, diff of it 36 ms, expand of (x+y+1)^6 7.9 ms, integrate of x·cos(x²) 0.13 ms, solve of a degree-8 polynomial 1.0 ms. It does not isolate the three functions above, so no evidence yet that they are hot. A profile of `diff` would be the next step
 
 ### Tier 2 — Missing features
 - [x] `eval(expr, env)` (exact, rational) and `to_decimal(n, digits)` (truncated) in `eval.rs`
-- [ ] Constants `pi`, `e` — **decision**: needs a representation in `Expr` (a `Const` holds only `Number`). `sqrt` as sugar is done
+- [x] Constants `pi`, `e`: new `Expr::Pi` and `Expr::E` variants (appended, so existing `Ord` order is unchanged). Parsed from the names `pi` and `e`, which are no longer variables. This is a behaviour change: `e` used as a variable name now means Euler's number (it is in CHANGELOG). `eval` returns `Unsupported`, because they are irrational. `diff` treats them as constants. `sqrt` as sugar is done
 - [x] Ergonomics: `+ - * / -` on `Expr`, `From<i64>`, `From<Number>`, `subs(expr, var, value)`. `From<&str>` is not added; use `str::parse`, which `FromStr` already provides
 - [x] LaTeX printer (`latex.rs`). MathML later
-- [ ] Calculus: done — n-th and partial derivatives (`diff_n`, `gradient`) and Asin/Acos/Atan antiderivatives. Not done — Tanh antiderivative, integration by parts, definite integrals, the `expand` fallback for `(x^2+1)^2`
+- [ ] Calculus: done — n-th and partial derivatives (`diff_n`, `gradient`), Asin/Acos/Atan antiderivatives, and integration by parts for `x^n · g(x)` where `g` has a basic antiderivative (`by_parts`, verified by differentiation). Not done — definite integrals, the `expand` fallback for `(x^2+1)^2`, integration by parts beyond that shape. Tanh antiderivative `ln(cosh x)` is done, with the `sinh/cosh → tanh` simplifier rule (`tanh-definition`) added so the verification in `integrate` passes
 - [ ] Algebra: `factor`, polynomial gcd, partial fractions, cubic/quartic radicals, inversion for `exp`/`log`/`sin`/`1/x` equations
 - [ ] Assumptions API (`positive`, `real`, `nonzero`) guarding `x*x^-1`, `log`, `abs`
 - [ ] Symbolic matrix type (det, inverse); series and limits; complex numbers
@@ -146,10 +147,10 @@ has a test or was checked by hand.
 - [ ] `serde` feature and binary `uir` format — **decision**: adding `serde` adds the crate's first dependency
 
 ### Tier 4 — Usability and automation
-- [ ] Parse errors with line/column, caret snippet and "did you mean"
+- [x] Parse errors with line/column, caret snippet and "did you mean" (for unknown function names)
   - [x] `tpt-sym` shows the line and column, and the source line with a caret under the error (tested for multi-line input)
   - [ ] "Did you mean" hint for unknown names — needs the parser to report the bad identifier, so it touches `Error::Parse` and is not done
-  - [ ] The library `Error::Parse` is still a byte offset plus a message. Line and column, and the "did you mean" hint, are not done
+  - [x] The library gives line and column through `error::line_col(src, pos)`. `Error::Parse` keeps its fields, so the change is non-breaking. An unknown function name is `Error::UnknownFunction { pos, name, suggestion }`, with a suggestion by optimal-string-alignment distance
   - [ ] `Unsupported` messages are still generic
 - [x] `tpt-sym` command-line tool (`src/bin/tpt-sym.rs`). A REPL is not built
 - [x] CI: `cargo fmt --check`, MSRV job on 1.87 (checked locally with `cargo +1.87.0`), Windows and macOS test runners, a feature matrix, a coverage job, and the float grep now ignores comment-only lines
@@ -169,5 +170,5 @@ has a test or was checked by hand.
 - [x] Starter `template/` project (builds and runs; uses a path dependency until a release exists). No `no_std` variant yet
 - [ ] docs.rs polish: the README is the crate overview. Per-function examples exist for `eval`, `latex` and the cookbook, but not for every public item
 - [x] CONTRIBUTING.md, with a walkthrough for adding a simplification rule
-- [x] Open decisions resolved by the recommended option: solver result enum is done (`SolveResult`). Partial-root variant, `Parametric` split, `pi`/`e` constants and `serde` stay deferred, so no public API change and no new dependency (see the review decisions above)
-- [ ] Sibling-crate URLs (`tpt-mathr`, `tpt-uir`, `tpt-testkit`, integration crates) — needs the user; no recommendation can supply them
+- [x] Open decisions resolved by the recommended option: solver result enum is done (`SolveResult`). Partial-root variant, `Parametric` split and `pi`/`e` constants are done as additions. The `Parametric` split and the `e` name change alter behaviour and are recorded in CHANGELOG (see the review decisions above). `serde` stays deferred, so no new dependency
+- [x] Sibling-crate URLs: `tpt-mathr`, `tpt-uir`, `tpt-testkit` found and recorded. The tpt-vertex, tpt-chemistry and tpt-concord integrations are dropped by the user (see above)

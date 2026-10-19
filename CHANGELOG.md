@@ -21,7 +21,19 @@ use semantic versioning once v1.0.0 is released.
 - `docs/cookbook.md`, with each recipe checked as a doctest.
 - `CONTRIBUTING.md` with a walkthrough for adding a simplification rule.
 
+- `Expr::Pi` and `Expr::E` (the constants π and Euler's number). They are appended, so the existing variant order is unchanged.
+- `SolveResult::Partial { exact, rest }`: exact roots, plus a numeric hand-off for a remaining factor with no closed form.
+- `SolveResult::Conditional(expr)`: an equation with no unknown holds when `expr` is zero.
+- `Error::UnknownFunction { pos, name, suggestion }`, with a "did you mean" suggestion for likely typos such as `sni(x)`.
+- `error::line_col(src, pos)`: the 1-based line and column of a byte offset.
+- Integration by parts for `x^n · g(x)` where `g` has a basic antiderivative, such as `x*sin(x)` and `x^2*exp(x)`.
+- Integration of `tanh`, with a simplifier rule `sinh(x)*cosh(x)^-1` → `tanh(x)`.
+- Biquadratic equations `a·x^4 + b·x^2 + c = 0` have exact real roots.
+
 ### Changed
+- Exact arithmetic now uses `tpt-mathr-arith` (the `no_std` arithmetic crate of tpt-mathr, pinned to git revision `f736d3e`). Breaking: `Number::numer()` and `Number::denom()` return an owned `BigInt` instead of a reference. The `stub-mathr` feature and its compile gate are removed. Git dependencies cannot be published to crates.io, so this must be resolved before any release. On `examples/bench.rs`, arithmetic is faster than the old stub after the integer fast paths.
+- `pi` and `e` parse as constants, not variables. `eval` returns `Unsupported` for them, and `diff` treats them as constants.
+- `solve` on an equation with no unknown returns `SolveResult::Conditional` instead of `Parametric`. `Parametric` now means free unknowns in linear systems only.
 - Number literals of any length parse exactly. Previously literals over about 38 digits were rejected, so large printed constants did not reparse.
 - A name followed directly by `(` that is not a built-in function is a parse error. Before, it was read as a product, so `foo(x)` became `foo*x`.
 - Parsing rejects input nested deeper than 128 levels instead of risking a stack overflow.

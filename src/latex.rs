@@ -30,6 +30,8 @@ fn tex(e: &Expr) -> String {
     match e {
         Expr::Var(name) => var_tex(name),
         Expr::Const(n) => number_tex(n),
+        Expr::Pi => String::from("\\pi"),
+        Expr::E => String::from("e"),
         Expr::Add(terms) => {
             let mut out = String::new();
             for (i, t) in terms.iter().enumerate() {

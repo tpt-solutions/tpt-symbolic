@@ -1,41 +1,61 @@
-//! Exact number type: a local stand-in for `tpt-mathr`.
+//! Exact rational numbers, backed by the `tpt-mathr` arithmetic crate.
 //!
-//! Exact rationals over arbitrary-precision integers. Arithmetic never rounds
-//! and never overflows. `None` is returned only for division by zero, and for
-//! powers whose exponent exceeds [`MAX_POW_EXPONENT`]. Replacing this module
-//! with the real `tpt-mathr` means implementing [`ExactNumber`] for its type.
+//! Arithmetic never rounds and never overflows. `None` is returned only for
+//! division by zero, and for powers whose exponent exceeds [`MAX_POW_EXPONENT`].
+//! [`Number::numer`] and [`Number::denom`] return this crate's [`BigInt`], which
+//! is converted from the `tpt-mathr` value on each call.
 
 use crate::bigint::BigInt;
+use alloc::format;
+use alloc::string::ToString;
+use core::cmp::Ordering;
 use core::fmt;
+use tpt_mathr_arith::{BigInt as RBigInt, BigRat, BigUint, Progress, Sign};
 
 /// Largest exponent [`Number::checked_pow`] will expand.
 pub const MAX_POW_EXPONENT: u64 = 1 << 16;
 
+/// Unlimited progress handle for every `tpt-mathr` operation. With no limits and no
+/// cancellation, the only failure left is division by zero, which callers already
+/// map to `None`.
+const PROGRESS: &Progress = &Progress::UNLIMITED;
+
 /// An exact rational `num / den`, stored in lowest terms with `den > 0`. Zero is `0/1`.
 ///
-/// The derived `Ord` is a structural order used for deterministic sorting of
-/// canonical expressions. It is not the numeric order.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// The derived `Eq` and `Hash` agree with the value. [`Ord`] is a structural order,
+/// numerator first, used for deterministic sorting of canonical expressions. It is
+/// not the numeric order; use [`Number::cmp_value`] for that.
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Number {
-    num: BigInt,
-    den: BigInt,
+    rat: BigRat,
+}
+
+impl Ord for Number {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.rat
+            .numerator()
+            .cmp(other.rat.numerator())
+            .then_with(|| self.rat.denominator().cmp(other.rat.denominator()))
+    }
+}
+
+impl PartialOrd for Number {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Number {
     /// Exact zero.
     pub fn zero() -> Number {
         Number {
-            num: BigInt::zero(),
-            den: BigInt::one(),
+            rat: BigRat::zero(),
         }
     }
 
     /// Exact one.
     pub fn one() -> Number {
-        Number {
-            num: BigInt::one(),
-            den: BigInt::one(),
-        }
+        Number { rat: BigRat::one() }
     }
 
     /// Exact negative one.
@@ -45,15 +65,23 @@ impl Number {
 
     /// Embeds an integer.
     pub fn from_int(n: i128) -> Number {
-        Number {
-            num: BigInt::from_i128(n),
-            den: BigInt::one(),
-        }
+        let rat = match i64::try_from(n) {
+            Ok(v) => BigRat::from(v),
+            Err(_) => BigRat::from_str_radix(&format!("{n}"), 10, PROGRESS)
+                .expect("a decimal integer is valid"),
+        };
+        Number { rat }
     }
 
     /// Builds `num / den` in lowest terms. Returns `None` when `den == 0`.
     pub fn new(num: i128, den: i128) -> Option<Number> {
-        Number::from_parts(BigInt::from_i128(num), BigInt::from_i128(den))
+        if den == 0 {
+            return None;
+        }
+        let num = RBigInt::from(num);
+        let num = if den < 0 { num.neg() } else { num };
+        let rat = BigRat::new(num, BigUint::from(den.unsigned_abs()), PROGRESS).ok()?;
+        Some(Number { rat })
     }
 
     /// Builds `num / den` from arbitrary-precision parts, in lowest terms.
@@ -63,63 +91,66 @@ impl Number {
             return None;
         }
         let (num, den) = if den.is_negative() {
-            (num.negate(), den.negate())
+            (num.negate(), den.abs())
         } else {
             (num, den)
         };
-        if num.is_zero() {
-            return Some(Number::zero());
-        }
-        let g = num.gcd(&den);
-        let (num, _) = num.divrem(&g)?;
-        let (den, _) = den.divrem(&g)?;
-        Some(Number { num, den })
+        let rat = BigRat::new(real_int(&num), real_int(&den).magnitude().clone(), PROGRESS).ok()?;
+        Some(Number { rat })
     }
 
     /// Numerator in lowest terms (carries the sign).
-    pub fn numer(&self) -> &BigInt {
-        &self.num
+    pub fn numer(&self) -> BigInt {
+        local_real_int(self.rat.numerator())
     }
 
     /// Denominator in lowest terms (always positive).
-    pub fn denom(&self) -> &BigInt {
-        &self.den
+    pub fn denom(&self) -> BigInt {
+        match self.rat.denominator().to_u64() {
+            Ok(v) => BigInt::from_i128(i128::from(v)),
+            Err(_) => local_int(&self.rat.denominator().to_string()),
+        }
     }
 
     /// The value as an `i128`, if it is an integer that fits.
     pub fn as_i128(&self) -> Option<i128> {
-        if self.den.is_one() {
-            self.num.to_i128()
-        } else {
-            None
+        if !self.is_integer() {
+            return None;
+        }
+        match self.rat.numerator().to_i64() {
+            Ok(v) => Some(i128::from(v)),
+            Err(_) => self.numer().to_i128(),
         }
     }
 
     /// `true` if the value is exactly zero.
     pub fn is_zero(&self) -> bool {
-        self.num.is_zero()
+        self.rat.is_zero()
     }
 
     /// `true` if the value is exactly one.
     pub fn is_one(&self) -> bool {
-        self.num.is_one() && self.den.is_one()
+        // Positive with magnitude 1 and denominator 1. `bit_len() == 1` means the value is 1.
+        matches!(self.rat.numerator().sign(), Sign::Positive)
+            && self.rat.numerator().magnitude().bit_len() == 1
+            && self.is_integer()
     }
 
     /// `true` if the value is strictly negative.
     pub fn is_negative(&self) -> bool {
-        self.num.is_negative()
+        matches!(self.rat.numerator().sign(), Sign::Negative)
     }
 
     /// `true` if the value is an integer.
     pub fn is_integer(&self) -> bool {
-        self.den.is_one()
+        // The denominator is at least 1, so a bit length of 1 means it is exactly 1.
+        self.rat.denominator().bit_len() == 1
     }
 
     /// Exact negation.
     pub fn checked_neg(&self) -> Option<Number> {
         Some(Number {
-            num: self.num.negate(),
-            den: self.den.clone(),
+            rat: self.rat.neg(),
         })
     }
 
@@ -127,36 +158,48 @@ impl Number {
     ///
     /// The derived `Ord` is structural and gives `1/2 < 1/3`, so use this when
     /// the order of the values matters.
-    pub fn cmp_value(&self, other: &Number) -> core::cmp::Ordering {
-        // Denominators are positive, so cross-multiplying keeps the order.
-        self.num.mul(&other.den).cmp(&other.num.mul(&self.den))
+    pub fn cmp_value(&self, other: &Number) -> Ordering {
+        // Only fails on cancellation, which is never requested here.
+        self.rat
+            .cmp_rat(&other.rat, PROGRESS)
+            .unwrap_or_else(|_| self.cmp(other))
     }
 
     /// Exact sum.
     pub fn checked_add(&self, o: &Number) -> Option<Number> {
-        let num = self.num.mul(&o.den).add(&o.num.mul(&self.den));
-        Number::from_parts(num, self.den.mul(&o.den))
+        self.rat
+            .add(&o.rat, PROGRESS)
+            .ok()
+            .map(|rat| Number { rat })
     }
 
     /// Exact difference.
     pub fn checked_sub(&self, o: &Number) -> Option<Number> {
-        let num = self.num.mul(&o.den).sub(&o.num.mul(&self.den));
-        Number::from_parts(num, self.den.mul(&o.den))
+        self.rat
+            .checked_sub(&o.rat, PROGRESS)
+            .ok()
+            .map(|rat| Number { rat })
     }
 
     /// Exact product.
     pub fn checked_mul(&self, o: &Number) -> Option<Number> {
-        Number::from_parts(self.num.mul(&o.num), self.den.mul(&o.den))
+        self.rat
+            .mul(&o.rat, PROGRESS)
+            .ok()
+            .map(|rat| Number { rat })
     }
 
     /// Exact reciprocal. `None` for zero.
     pub fn checked_recip(&self) -> Option<Number> {
-        Number::from_parts(self.den.clone(), self.num.clone())
+        self.rat.inv().ok().map(|rat| Number { rat })
     }
 
     /// Exact quotient. `None` when dividing by zero.
     pub fn checked_div(&self, o: &Number) -> Option<Number> {
-        self.checked_mul(&o.checked_recip()?)
+        self.rat
+            .div(&o.rat, PROGRESS)
+            .ok()
+            .map(|rat| Number { rat })
     }
 
     /// Exact integer power by squaring. `None` for a negative power of zero,
@@ -186,12 +229,51 @@ impl Number {
     }
 }
 
+/// The `tpt-mathr` form of `n`. Values that fit an `i64` skip the string round-trip.
+fn real_int(n: &BigInt) -> RBigInt {
+    match n.to_i128() {
+        Some(v) => RBigInt::from(v),
+        None => BigRat::from_str_radix(&n.to_string(), 10, PROGRESS)
+            .expect("a decimal integer is valid")
+            .numerator()
+            .clone(),
+    }
+}
+
+/// The local form of a `tpt-mathr` integer. Values that fit an `i64` skip the string round-trip.
+fn local_real_int(n: &RBigInt) -> BigInt {
+    match n.to_i64() {
+        Ok(v) => BigInt::from_i128(i128::from(v)),
+        Err(_) => local_int(&n.to_string()),
+    }
+}
+
+/// Converts a decimal string from `tpt-mathr` (optional leading `-`) to a [`BigInt`].
+fn local_int(decimal: &str) -> BigInt {
+    let (negative, digits) = match decimal.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, decimal),
+    };
+    let ten = BigInt::from_i128(10);
+    let mut acc = BigInt::from_i128(0);
+    for digit in digits.bytes() {
+        acc = acc
+            .mul(&ten)
+            .add(&BigInt::from_i128(i128::from(digit - b'0')));
+    }
+    if negative {
+        acc.negate()
+    } else {
+        acc
+    }
+}
+
 impl fmt::Display for Number {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.den.is_one() {
-            write!(f, "{}", self.num)
+        if self.is_integer() {
+            write!(f, "{}", self.rat.numerator())
         } else {
-            write!(f, "{}/{}", self.num, self.den)
+            write!(f, "{}/{}", self.rat.numerator(), self.rat.denominator())
         }
     }
 }
@@ -332,6 +414,33 @@ mod tests {
     #[test]
     fn oversized_exponents_are_refused() {
         assert!(Number::from_int(2).checked_pow(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn integer_accessors_cover_small_and_large_values() {
+        use crate::bigint::BigInt;
+        // Negative denominator moves the sign to the numerator.
+        assert_eq!(q(3, -6).numer().to_i128(), Some(-1));
+        assert_eq!(q(3, -6).denom().to_i128(), Some(2));
+        assert!(q(3, -6).is_negative());
+        assert!(!q(3, -6).is_integer());
+        // Beyond i64: numer/denom take the string path and still agree with the value.
+        let big = Number::from_int(2).checked_pow(100).unwrap();
+        assert_eq!(big.numer(), BigInt::from_i128(1 << 100));
+        assert_eq!(big.denom().to_i128(), Some(1));
+        assert!(big.is_integer());
+        // 2^100 fits i128, so it is still reported; 2^200 would not be.
+        assert_eq!(big.as_i128(), Some(1 << 100));
+        assert_eq!(
+            Number::from_int(2).checked_pow(200).unwrap().as_i128(),
+            None
+        );
+        assert!(Number::one().is_one());
+        assert!(!Number::neg_one().is_one());
+        assert!(!q(1, 2).is_one());
+        let huge = Number::from_parts(BigInt::from_i128(1 << 100), BigInt::from_i128(3)).unwrap();
+        assert_eq!(huge.numer(), BigInt::from_i128(1 << 100));
+        assert_eq!(huge.denom().to_i128(), Some(3));
     }
 
     #[test]

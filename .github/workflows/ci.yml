@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: [stub-mathr, "stub-mathr,std", "stub-mathr,uir", "stub-mathr,testkit"]
+        features: [std, uir, testkit]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -76,7 +76,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       # Library only: the tpt-sym binary needs std and cannot build for bare metal.
-      - run: cargo build --lib --no-default-features --features stub-mathr --target ${{ matrix.target }}
+      - run: cargo build --lib --target ${{ matrix.target }}
 
   float-free:
     runs-on: ubuntu-latest

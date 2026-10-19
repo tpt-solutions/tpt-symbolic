@@ -13,6 +13,7 @@
 use std::process::ExitCode;
 
 use tpt_symbolic::calculus::{diff, integrate, Integral};
+use tpt_symbolic::error::line_col;
 use tpt_symbolic::eval::{eval, to_decimal};
 use tpt_symbolic::latex::to_latex;
 use tpt_symbolic::parse::parse;
@@ -106,21 +107,46 @@ fn parse_binding(binding: &str) -> Result<(String, Number), Failure> {
 fn parse_arg(src: &str) -> Result<Expr, Failure> {
     parse(src).map_err(|err| match err {
         Error::Parse { pos, message } => Failure::Message(describe_parse_error(src, pos, message)),
+        Error::UnknownFunction {
+            pos,
+            name,
+            suggestion,
+        } => {
+            let message = match suggestion {
+                Some(s) => format!("unknown function `{name}`; did you mean `{s}`?"),
+                None => format!("unknown function `{name}`; write `*` if you mean multiplication"),
+            };
+            Failure::Message(describe_at(src, pos, &message))
+        }
         other => Failure::from(other),
     })
 }
 
 /// Formats a parse error at byte offset `pos` in `src`, with a 1-based line and column.
 fn describe_parse_error(src: &str, pos: usize, message: &str) -> String {
+    let (line, column, text, caret) = snippet(src, pos);
+    format!("parse error at line {line}, column {column}: {message}\n{text}\n{caret}^")
+}
+
+/// `message` with the line and column of `pos`, the source line, and a caret under `pos`.
+fn describe_at(src: &str, pos: usize, message: &str) -> String {
+    let (line, column, text, caret) = snippet(src, pos);
+    format!("{message} at line {line}, column {column}\n{text}\n{caret}^")
+}
+
+/// The 1-based line and column of `pos`, the text of its line, and the padding that
+/// places a caret under it.
+fn snippet(src: &str, pos: usize) -> (usize, usize, &str, String) {
+    let (line, column) = line_col(src, pos);
     let pos = pos.min(src.len());
-    let before = &src[..pos];
-    let line_no = before.matches('\n').count() + 1;
-    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    let line_start = src[..pos].rfind('\n').map_or(0, |i| i + 1);
     let line_end = src[pos..].find('\n').map_or(src.len(), |i| pos + i);
-    let line = &src[line_start..line_end];
-    let column = before[line_start..].chars().count() + 1;
-    let caret_pad = " ".repeat(column - 1);
-    format!("parse error at line {line_no}, column {column}: {message}\n{line}\n{caret_pad}^")
+    (
+        line,
+        column,
+        &src[line_start..line_end],
+        " ".repeat(column - 1),
+    )
 }
 
 fn constant(e: &Expr) -> Result<Number, Failure> {
@@ -145,6 +171,15 @@ fn describe_solve(result: &SolveResult) -> String {
             .collect::<Vec<_>>()
             .join(", "),
         SolveResult::Parametric => String::from("solutions depend on free parameters"),
+        SolveResult::Conditional(e) => format!("holds only when {e} = 0"),
+        SolveResult::Partial { exact, rest } => {
+            let exact: Vec<String> = exact.iter().map(|r| r.to_string()).collect();
+            format!(
+                "{}; numeric root-finding needed for {} = 0",
+                exact.join(", "),
+                rest.expr
+            )
+        }
         SolveResult::Numeric(root) => {
             format!(
                 "no closed form; numeric root-finding needed for {} = 0",

@@ -8,19 +8,21 @@ readme = "README.md"
 rust-version = "1.87"
 keywords = ["symbolic", "cas", "algebra", "calculus", "no-std"]
 categories = ["mathematics", "science", "no-std"]
+repository = "https://github.com/tpt-solutions/tpt-symbolic"
+documentation = "https://docs.rs/tpt-symbolic"
 
 [features]
-default = ["stub-mathr"]
+default = []
 # Enables the standard library (std::error::Error impls only; the core stays no_std).
 std = []
-# Uses the local exact-number shim in place of tpt-mathr. Required until the real crate is wired in.
-stub-mathr = []
 # Text-based IR codec (stand-in for tpt-uir).
 uir = []
 # Deterministic random-expression generator for property and fuzz tests.
 testkit = []
 
 [dependencies]
+# Exact arithmetic: the `no_std` arithmetic crate of tpt-mathr. Pinned to a revision, since it is not on crates.io.
+tpt-mathr-arith = { git = "https://github.com/tpt-solutions/tpt-mathr", rev = "f736d3ed7be132b52459715fecde88ec2a09df63" }
 
 [[test]]
 name = "fuzz"

@@ -8,11 +8,6 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
-#[cfg(not(feature = "stub-mathr"))]
-compile_error!(
-    "the real tpt-mathr is not wired in yet; build with the default `stub-mathr` feature"
-);
-
 /// Task-oriented recipes. Every code block is a doctest.
 #[doc = include_str!("../docs/cookbook.md")]
 pub mod cookbook {}

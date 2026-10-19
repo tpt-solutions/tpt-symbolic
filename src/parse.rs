@@ -74,6 +74,54 @@ fn is_keyword(word: &str) -> bool {
     matches!(word, "and" | "or" | "not")
 }
 
+/// Every name the parser accepts as a function call, including `sqrt`.
+const FUNCTION_NAMES: &[&str] = &[
+    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "exp", "log", "abs",
+    "sqrt",
+];
+
+/// The known function name closest to `name`, if it is close enough to be a likely typo.
+///
+/// "Close" means one edit for a name of up to three characters, and two for a longer
+/// name. A transposition counts as one edit, so `sni` is a typo for `sin`.
+fn closest_function_name(name: &str) -> Option<&'static str> {
+    let mut best: Option<(usize, &'static str)> = None;
+    for &candidate in FUNCTION_NAMES {
+        let d = edit_distance(name, candidate);
+        if best.is_none_or(|(b, _)| d < b) {
+            best = Some((d, candidate));
+        }
+    }
+    let (d, candidate) = best?;
+    let limit = if name.len() >= 4 { 2 } else { 1 };
+    (d <= limit && d > 0).then_some(candidate)
+}
+
+/// Optimal string alignment distance over bytes: insertions, deletions, substitutions
+/// and adjacent transpositions, each costing one. Function names are ASCII.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let mut d = alloc::vec![alloc::vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()]
+}
+
 fn tokenize(src: &str) -> Result<Vec<(usize, Tok)>, Error> {
     let bytes = src.as_bytes();
     let mut out = Vec::new();
@@ -339,6 +387,7 @@ impl Parser {
                 if is_keyword(&name) {
                     return Err(self.err("keyword used where a value was expected"));
                 }
+                let name_pos = self.toks.get(self.pos).map_or(self.end, |(p, _)| *p);
                 self.bump();
                 if name == "sqrt" && self.at_sym('(') {
                     self.bump();
@@ -360,10 +409,16 @@ impl Parser {
                     // A name directly followed by '(' is a call to something we don't
                     // know. Treating it as `name * (...)` would hide the typo, so we
                     // reject it and ask for an explicit `*` instead.
-                    None if self.at_sym('(') => {
-                        Err(self.err("unknown function; write '*' if you mean multiplication"))
-                    }
-                    None => Ok(Expr::var(&name)),
+                    None if self.at_sym('(') => Err(Error::UnknownFunction {
+                        pos: name_pos,
+                        suggestion: closest_function_name(&name),
+                        name,
+                    }),
+                    None => Ok(match name.as_str() {
+                        "pi" => Expr::Pi,
+                        "e" => Expr::E,
+                        _ => Expr::var(&name),
+                    }),
                 }
             }
             Tok::Sym(_) => Err(self.err("expected a number, a name or '('")),
@@ -379,6 +434,37 @@ mod tests {
 
     fn p(s: &str) -> Expr {
         parse(s).unwrap_or_else(|e| panic!("failed to parse {s:?}: {e}"))
+    }
+
+    #[test]
+    fn unknown_function_suggests_a_close_name() {
+        for (src, pos, suggestion) in [
+            ("sni(x)", 0, Some("sin")),
+            ("2 * sqr(x)", 4, Some("sqrt")),
+            ("foo(x)", 0, None),
+        ] {
+            match parse(src) {
+                Err(Error::UnknownFunction {
+                    pos: got,
+                    suggestion: s,
+                    ..
+                }) => {
+                    assert_eq!(got, pos, "{src}");
+                    assert_eq!(s, suggestion, "{src}");
+                }
+                other => panic!("{src}: expected UnknownFunction, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn line_col_counts_lines_and_characters() {
+        let src = "ab\ncdé\nf";
+        assert_eq!(crate::error::line_col(src, 0), (1, 1));
+        assert_eq!(crate::error::line_col(src, 4), (2, 2));
+        // Offset 6 is inside the two-byte `é`; it snaps back to that character.
+        assert_eq!(crate::error::line_col(src, 6), (2, 3));
+        assert_eq!(crate::error::line_col(src, 100), (3, 2));
     }
 
     #[test]
@@ -507,7 +593,10 @@ mod tests {
 
     #[test]
     fn unknown_function_calls_are_errors() {
-        assert!(matches!(parse("foo(x)"), Err(Error::Parse { .. })));
+        assert!(matches!(
+            parse("foo(x)"),
+            Err(Error::UnknownFunction { .. })
+        ));
         // Juxtaposition with no parenthesis after the name is still multiplication.
         assert_eq!(p("x y"), p("x*y"));
         assert_eq!(p("x*(y)"), p("x*y"));

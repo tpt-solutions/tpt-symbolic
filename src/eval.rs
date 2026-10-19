@@ -29,6 +29,8 @@ use alloc::string::{String, ToString};
 pub fn eval(e: &Expr, env: &[(&str, Number)]) -> Result<Number, Error> {
     match e {
         Expr::Const(n) => Ok(n.clone()),
+        // π and e are irrational, so no exact rational value exists.
+        Expr::Pi | Expr::E => Err(Error::Unsupported("pi and e have no exact rational value")),
         Expr::Var(name) => env
             .iter()
             .find(|(n, _)| *n == &**name)
@@ -115,7 +117,7 @@ pub fn to_decimal(n: &Number, digits: usize) -> String {
     let (int_part, mut rem) = n
         .numer()
         .abs()
-        .divrem(den)
+        .divrem(&den)
         .unwrap_or((BigInt::zero(), BigInt::zero()));
     let mut out = String::new();
     if n.is_negative() {
@@ -127,7 +129,7 @@ pub fn to_decimal(n: &Number, digits: usize) -> String {
         for _ in 0..digits {
             let (digit, next) = rem
                 .mul(&ten)
-                .divrem(den)
+                .divrem(&den)
                 .unwrap_or((BigInt::zero(), BigInt::zero()));
             let d = digit.to_i128().unwrap_or(0);
             out.push(char::from(b'0' + d as u8));

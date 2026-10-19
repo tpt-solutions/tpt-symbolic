@@ -1,4 +1,4 @@
-//! Arbitrary-precision signed integers backing the exact-number shim.
+//! Arbitrary-precision signed integers. The exact-number type `Number` converts to and from these for `numer` and `denom`.
 //!
 //! Magnitudes are little-endian `u64` limbs with no trailing zero limb. Zero
 //! has an empty magnitude and is never negative, so the representation is
