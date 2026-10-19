@@ -18,6 +18,7 @@
 //! The pass limit guarantees that the call returns, even on rule sets that do
 //! not terminate. Tests check that idempotence holds on random inputs.
 
+use crate::error::Error;
 use crate::expr::{Expr, SymbolicFunc};
 use crate::mathr::Number;
 use alloc::vec;
@@ -61,32 +62,122 @@ pub struct Rule {
 
 /// All rules, in descending priority order.
 pub const RULES: &[Rule] = &[
-    Rule { name: "fold-constant-function", priority: 100, category: Category::Constant, apply: rule_fold_function },
-    Rule { name: "reflexive-equation", priority: 95, category: Category::Constant, apply: rule_reflexive_equation },
-    Rule { name: "parity-of-argument", priority: 90, category: Category::Trigonometric, apply: rule_parity },
-    Rule { name: "pythagorean-identity", priority: 85, category: Category::Trigonometric, apply: rule_pythagorean },
-    Rule { name: "even-power-of-abs", priority: 82, category: Category::Algebraic, apply: rule_even_power_of_abs },
-    Rule { name: "tan-definition", priority: 80, category: Category::Trigonometric, apply: rule_tan_definition },
-    Rule { name: "inverse-log-exp", priority: 80, category: Category::Exponential, apply: rule_log_exp_inverse },
-    Rule { name: "merge-exponentials", priority: 75, category: Category::Exponential, apply: rule_exp_merge },
-    Rule { name: "and-absorption", priority: 60, category: Category::Logical, apply: rule_and_absorb },
-    Rule { name: "or-absorption", priority: 60, category: Category::Logical, apply: rule_or_absorb },
-    Rule { name: "de-morgan", priority: 50, category: Category::Logical, apply: rule_de_morgan },
+    Rule {
+        name: "fold-constant-function",
+        priority: 100,
+        category: Category::Constant,
+        apply: rule_fold_function,
+    },
+    Rule {
+        name: "reflexive-equation",
+        priority: 95,
+        category: Category::Constant,
+        apply: rule_reflexive_equation,
+    },
+    Rule {
+        name: "parity-of-argument",
+        priority: 90,
+        category: Category::Trigonometric,
+        apply: rule_parity,
+    },
+    Rule {
+        name: "pythagorean-identity",
+        priority: 85,
+        category: Category::Trigonometric,
+        apply: rule_pythagorean,
+    },
+    Rule {
+        name: "even-power-of-abs",
+        priority: 82,
+        category: Category::Algebraic,
+        apply: rule_even_power_of_abs,
+    },
+    Rule {
+        name: "tan-definition",
+        priority: 80,
+        category: Category::Trigonometric,
+        apply: rule_tan_definition,
+    },
+    Rule {
+        name: "inverse-log-exp",
+        priority: 80,
+        category: Category::Exponential,
+        apply: rule_log_exp_inverse,
+    },
+    Rule {
+        name: "merge-exponentials",
+        priority: 75,
+        category: Category::Exponential,
+        apply: rule_exp_merge,
+    },
+    Rule {
+        name: "and-absorption",
+        priority: 60,
+        category: Category::Logical,
+        apply: rule_and_absorb,
+    },
+    Rule {
+        name: "or-absorption",
+        priority: 60,
+        category: Category::Logical,
+        apply: rule_or_absorb,
+    },
+    Rule {
+        name: "de-morgan",
+        priority: 50,
+        category: Category::Logical,
+        apply: rule_de_morgan,
+    },
 ];
 
 /// Simplifies `e` to a fixed point of the rule set (bounded by [`MAX_PASSES`]).
 ///
 /// The result is canonical, and `simplify(&simplify(e)) == simplify(e)`.
+///
+/// If the limits are hit, the partly simplified result is returned without
+/// signalling it. Use [`simplify_checked`] to find out.
 pub fn simplify(e: &Expr) -> Expr {
+    simplify_bounded(e).0
+}
+
+/// Like [`simplify`], but returns an error instead of a partial result when the
+/// fixed point is not reached within [`MAX_PASSES`], or when the tree is deeper
+/// than [`MAX_DEPTH`] (so some subtrees could not be rewritten).
+pub fn simplify_checked(e: &Expr) -> Result<Expr, Error> {
+    match simplify_bounded(e) {
+        (out, true) if tree_depth(&out) <= MAX_DEPTH => Ok(out),
+        (_, true) => Err(Error::Unsupported(
+            "expression is nested deeper than the simplifier limit",
+        )),
+        (_, false) => Err(Error::Unsupported(
+            "simplification did not reach a fixed point",
+        )),
+    }
+}
+
+/// The result, and whether it is a fixed point of the rule set.
+fn simplify_bounded(e: &Expr) -> (Expr, bool) {
     let mut cur = e.clone();
     for _ in 0..MAX_PASSES {
         let next = pass(&cur, 0);
         if next == cur {
-            break;
+            return (cur, true);
         }
         cur = next;
     }
-    cur
+    (cur, false)
+}
+
+/// Number of levels in the tree, counting a leaf as 1.
+fn tree_depth(e: &Expr) -> usize {
+    match e {
+        Expr::Var(_) | Expr::Const(_) | Expr::Bool(_) => 1,
+        Expr::Add(v) | Expr::Mul(v) | Expr::And(v) | Expr::Or(v) => {
+            1 + v.iter().map(tree_depth).max().unwrap_or(0)
+        }
+        Expr::Pow(a, b) | Expr::Eq(a, b) => 1 + tree_depth(a).max(tree_depth(b)),
+        Expr::Func(_, a) | Expr::Not(a) => 1 + tree_depth(a),
+    }
 }
 
 fn pass(e: &Expr, depth: usize) -> Expr {
@@ -189,12 +280,18 @@ fn square_arg(e: &Expr, f: SymbolicFunc) -> Option<&Expr> {
 fn identity_pair(p: &(Number, Expr), q: &(Number, Expr)) -> Option<Expr> {
     let (c1, b1) = p;
     let (c2, b2) = q;
-    if let (Some(a), Some(b)) = (square_arg(b1, SymbolicFunc::Sin), square_arg(b2, SymbolicFunc::Cos)) {
+    if let (Some(a), Some(b)) = (
+        square_arg(b1, SymbolicFunc::Sin),
+        square_arg(b2, SymbolicFunc::Cos),
+    ) {
         if a == b && c1 == c2 {
             return Some(Expr::Const(c1.clone()));
         }
     }
-    if let (Some(a), Some(b)) = (square_arg(b1, SymbolicFunc::Cosh), square_arg(b2, SymbolicFunc::Sinh)) {
+    if let (Some(a), Some(b)) = (
+        square_arg(b1, SymbolicFunc::Cosh),
+        square_arg(b2, SymbolicFunc::Sinh),
+    ) {
         if a == b && c2.checked_neg().as_ref() == Some(c1) {
             return Some(Expr::Const(c1.clone()));
         }
@@ -242,7 +339,9 @@ fn rule_even_power_of_abs(e: &Expr) -> Option<Expr> {
 fn rule_tan_definition(e: &Expr) -> Option<Expr> {
     let Expr::Mul(v) = e else { return None };
     for (i, f) in v.iter().enumerate() {
-        let Expr::Func(SymbolicFunc::Sin, a) = f else { continue };
+        let Expr::Func(SymbolicFunc::Sin, a) = f else {
+            continue;
+        };
         for (j, g) in v.iter().enumerate() {
             if i == j {
                 continue;
@@ -343,7 +442,11 @@ fn junction_rule(e: &Expr, is_and: bool) -> Option<Expr> {
                 .filter(|(j, _)| *j != i)
                 .map(|(_, x)| x.clone())
                 .collect();
-            return Some(if is_and { Expr::and_all(rest) } else { Expr::or_all(rest) });
+            return Some(if is_and {
+                Expr::and_all(rest)
+            } else {
+                Expr::or_all(rest)
+            });
         }
     }
     None
@@ -361,8 +464,12 @@ fn rule_or_absorb(e: &Expr) -> Option<Expr> {
 fn rule_de_morgan(e: &Expr) -> Option<Expr> {
     let Expr::Not(inner) = e else { return None };
     match &**inner {
-        Expr::And(v) => Some(Expr::or_all(v.iter().cloned().map(Expr::logical_not).collect())),
-        Expr::Or(v) => Some(Expr::and_all(v.iter().cloned().map(Expr::logical_not).collect())),
+        Expr::And(v) => Some(Expr::or_all(
+            v.iter().cloned().map(Expr::logical_not).collect(),
+        )),
+        Expr::Or(v) => Some(Expr::and_all(
+            v.iter().cloned().map(Expr::logical_not).collect(),
+        )),
         _ => None,
     }
 }
@@ -381,7 +488,9 @@ pub fn expand(e: &Expr) -> Expr {
             let base = expand(b);
             if let (Expr::Add(_), Some(n)) = (&base, x.as_number()) {
                 if n.is_integer() && n.as_i128().is_some_and(|v| (2..=8).contains(&v)) {
-                    let copies: Vec<Expr> = (0..n.as_i128().unwrap_or(0)).map(|_| base.clone()).collect();
+                    let copies: Vec<Expr> = (0..n.as_i128().unwrap_or(0))
+                        .map(|_| base.clone())
+                        .collect();
                     return expand_product(e, &copies);
                 }
             }
@@ -402,6 +511,11 @@ fn expand_product(original: &Expr, factors: &[Expr]) -> Expr {
             Expr::Add(ts) => ts,
             other => alloc::vec![other],
         };
+        // Check the size before allocating, so a huge product can't ask for
+        // more memory than the cap allows.
+        if acc.len().saturating_mul(terms.len()) > MAX_EXPAND_TERMS {
+            return original.clone();
+        }
         let mut next = Vec::with_capacity(acc.len() * terms.len());
         for a in &acc {
             for t in &terms {
@@ -463,7 +577,10 @@ mod tests {
         assert_eq!(s(&format!("({a}) or (({a}) and ({b}))")), s(a));
         assert_eq!(s(&format!("({a}) and not ({a})")), Expr::boolean(false));
         assert_eq!(s(&format!("({a}) or not ({a})")), Expr::boolean(true));
-        assert_eq!(s(&format!("not (({a}) and ({b}))")), s(&format!("not ({a}) or not ({b})")));
+        assert_eq!(
+            s(&format!("not (({a}) and ({b}))")),
+            s(&format!("not ({a}) or not ({b})"))
+        );
     }
 
     #[test]
@@ -504,5 +621,52 @@ mod tests {
             deep = Expr::func(SymbolicFunc::Sin, deep);
         }
         let _ = simplify(&deep);
+    }
+
+    #[test]
+    fn simplify_checked_reports_limits() {
+        assert_eq!(simplify_checked(&p("x + x")).unwrap(), p("2*x"));
+        let mut deep = Expr::var("x");
+        for _ in 0..(MAX_DEPTH + 8) {
+            deep = Expr::func(SymbolicFunc::Sin, deep);
+        }
+        assert!(matches!(
+            simplify_checked(&deep),
+            Err(Error::Unsupported(_))
+        ));
+    }
+
+    /// Property check on the rule set: simplification must not change the value.
+    ///
+    /// Compares exact values at rational sample points. A point where either side
+    /// has no exact value (functions, division by zero) is skipped, so this checks
+    /// the rational part of the rules, not the trigonometric ones.
+    #[test]
+    fn simplify_preserves_value_at_sample_points() {
+        use crate::eval::eval;
+        let samples = [(0, 1), (1, 1), (-2, 1), (3, 2), (-5, 4)];
+        let mut rng = Rng::new(2026);
+        let mut compared = 0usize;
+        for _ in 0..1500 {
+            let e = random_expr(&mut rng, 4);
+            let s = simplify(&e);
+            for (xn, xd) in samples {
+                for (yn, yd) in samples {
+                    let env = [
+                        ("x", Number::new(xn, xd).unwrap()),
+                        ("y", Number::new(yn, yd).unwrap()),
+                    ];
+                    let (Ok(before), Ok(after)) = (eval(&e, &env), eval(&s, &env)) else {
+                        continue;
+                    };
+                    assert_eq!(
+                        before, after,
+                        "simplify changed the value of {e} (simplified to {s})"
+                    );
+                    compared += 1;
+                }
+            }
+        }
+        assert!(compared > 1000, "too few exact comparisons: {compared}");
     }
 }

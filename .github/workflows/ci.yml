@@ -5,18 +5,65 @@ on:
   pull_request:
 
 jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --all-features
+
+  feature-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [stub-mathr, "stub-mathr,std", "stub-mathr,uir", "stub-mathr,testkit"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --no-default-features --features ${{ matrix.features }}
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.87.0
+      - run: cargo test --all-features
+
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo test --all-features
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --all-features --summary-only
 
   no-std:
     runs-on: ubuntu-latest
@@ -28,7 +75,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: cargo build --no-default-features --features stub-mathr --target ${{ matrix.target }}
+      # Library only: the tpt-sym binary needs std and cannot build for bare metal.
+      - run: cargo build --lib --no-default-features --features stub-mathr --target ${{ matrix.target }}
 
   float-free:
     runs-on: ubuntu-latest
@@ -36,7 +84,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Reject floating-point types in the crate
         run: |
-          if grep -rnE '\bf(32|64)\b' src; then
+          # Ignore comment-only lines, so docs may mention f32/f64 in prose.
+          if grep -rnE '\bf(32|64)\b' src | grep -vE '^[^:]+:[0-9]+:\s*//'; then
             echo "floating-point type found in src/; the core must stay exact"
             exit 1
           fi
+
+  release-check:
+    # Dry run only. Publishing stays a manual decision until the v1.0.0 release is approved.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish --dry-run --allow-dirty

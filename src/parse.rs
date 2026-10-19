@@ -17,12 +17,20 @@
 //! identifiers. Multi-letter names are single variables (`xy` is one name). Use
 //! `x*y` for a product.
 
+use crate::bigint::BigInt;
 use crate::error::Error;
 use crate::expr::{Expr, SymbolicFunc};
 use crate::mathr::Number;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::str::FromStr;
+
+/// Maximum nesting of parentheses, unary signs, `not` and power chains.
+///
+/// Every nesting level costs several stack frames of recursive descent, so the cap
+/// keeps parsing safe on small stacks (wasm defaults to 1 MiB) and bounds the depth
+/// of any tree the parser builds.
+pub const MAX_PARSE_DEPTH: usize = 128;
 
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
@@ -35,10 +43,18 @@ enum Tok {
 pub fn parse(src: &str) -> Result<Expr, Error> {
     let toks = tokenize(src)?;
     if toks.is_empty() {
-        return Err(Error::Parse { pos: 0, message: "empty input" });
+        return Err(Error::Parse {
+            pos: 0,
+            message: "empty input",
+        });
     }
     let end = src.len();
-    let mut p = Parser { toks, pos: 0, end };
+    let mut p = Parser {
+        toks,
+        pos: 0,
+        end,
+        depth: 0,
+    };
     let e = p.or_expr()?;
     if p.pos < p.toks.len() {
         return Err(p.err("unexpected input after the expression"));
@@ -93,7 +109,10 @@ fn tokenize(src: &str) -> Result<Vec<(usize, Tok)>, Error> {
                 i += 1;
             }
             _ => {
-                return Err(Error::Parse { pos: i, message: "unexpected character" });
+                return Err(Error::Parse {
+                    pos: i,
+                    message: "unexpected character",
+                });
             }
         }
     }
@@ -111,25 +130,40 @@ fn parse_decimal(text: &str) -> Option<Number> {
     if frac_part.contains('.') {
         return None;
     }
-    let mut num: i128 = 0;
+    // Accumulate in BigInt so literals of any length parse, matching what the
+    // printer emits for large constants.
+    let ten = BigInt::from_i128(10);
+    let mut num = BigInt::from_i128(0);
     for ch in int_part.chars().chain(frac_part.chars()) {
-        let digit = ch.to_digit(10)? as i128;
-        num = num.checked_mul(10)?.checked_add(digit)?;
+        let digit = BigInt::from_i128(ch.to_digit(10)? as i128);
+        num = num.mul(&ten).add(&digit);
     }
-    let mut den: i128 = 1;
+    let mut den = BigInt::one();
     for _ in frac_part.chars() {
-        den = den.checked_mul(10)?;
+        den = den.mul(&ten);
     }
-    Number::new(num, den)
+    Number::from_parts(num, den)
 }
 
 struct Parser {
     toks: Vec<(usize, Tok)>,
     pos: usize,
     end: usize,
+    depth: usize,
 }
 
 impl Parser {
+    /// Runs one recursive step, failing once the nesting cap is exceeded.
+    fn nested<T>(&mut self, step: impl FnOnce(&mut Self) -> Result<T, Error>) -> Result<T, Error> {
+        if self.depth == MAX_PARSE_DEPTH {
+            return Err(self.err("expression is nested too deeply"));
+        }
+        self.depth += 1;
+        let result = step(self);
+        self.depth -= 1;
+        result
+    }
+
     fn peek(&self) -> Option<&Tok> {
         self.toks.get(self.pos).map(|(_, t)| t)
     }
@@ -161,6 +195,10 @@ impl Parser {
     }
 
     fn or_expr(&mut self) -> Result<Expr, Error> {
+        self.nested(Self::or_body)
+    }
+
+    fn or_body(&mut self) -> Result<Expr, Error> {
         let mut items = alloc::vec![self.and_expr()?];
         while self.at_word("or") {
             self.bump();
@@ -181,7 +219,8 @@ impl Parser {
     fn not_expr(&mut self) -> Result<Expr, Error> {
         if self.at_word("not") {
             self.bump();
-            Ok(Expr::logical_not(self.not_expr()?))
+            let inner = self.nested(Self::not_expr)?;
+            Ok(Expr::logical_not(inner))
         } else {
             self.eq_expr()
         }
@@ -250,10 +289,11 @@ impl Parser {
     fn unary(&mut self) -> Result<Expr, Error> {
         if self.at_sym('-') {
             self.bump();
-            Ok(Expr::negate(self.unary()?))
+            let inner = self.nested(Self::unary)?;
+            Ok(Expr::negate(inner))
         } else if self.at_sym('+') {
             self.bump();
-            self.unary()
+            self.nested(Self::unary)
         } else {
             self.power()
         }
@@ -263,7 +303,7 @@ impl Parser {
         let base = self.atom()?;
         if self.at_sym('^') {
             self.bump();
-            let exp = self.unary()?;
+            let exp = self.nested(Self::unary)?;
             let base_is_zero = base.as_number().is_some_and(|n| n.is_zero());
             let exp_is_negative = exp.as_number().is_some_and(|n| n.is_negative());
             if base_is_zero && exp_is_negative {
@@ -300,6 +340,15 @@ impl Parser {
                     return Err(self.err("keyword used where a value was expected"));
                 }
                 self.bump();
+                if name == "sqrt" && self.at_sym('(') {
+                    self.bump();
+                    let arg = self.or_expr()?;
+                    self.expect_sym(')', "expected ')' after function argument")?;
+                    return Ok(Expr::power(
+                        arg,
+                        Expr::rational(1, 2).expect("1/2 is valid"),
+                    ));
+                }
                 match SymbolicFunc::from_name(&name) {
                     Some(func) if self.at_sym('(') => {
                         self.bump();
@@ -308,6 +357,12 @@ impl Parser {
                         Ok(Expr::func(func, arg))
                     }
                     Some(_) => Err(self.err("function name must be followed by '(...)'")),
+                    // A name directly followed by '(' is a call to something we don't
+                    // know. Treating it as `name * (...)` would hide the typo, so we
+                    // reject it and ask for an explicit `*` instead.
+                    None if self.at_sym('(') => {
+                        Err(self.err("unknown function; write '*' if you mean multiplication"))
+                    }
                     None => Ok(Expr::var(&name)),
                 }
             }
@@ -337,7 +392,11 @@ mod tests {
         // Golden set: each group must canonicalize to one tree.
         let groups: &[&[&str]] = &[
             &["x + y", "y + x", "y+x", "(x) + (y)"],
-            &["2*x + 3 + x", "3 + 3*x - x*2 + 2*x - 2*x + 2*x - x + x", "x + x + x + 3 + x*0"],
+            &[
+                "2*x + 3 + x",
+                "3 + 3*x - x*2 + 2*x - 2*x + 2*x - x + x",
+                "x + x + x + 3 + x*0",
+            ],
             &["2x", "2*x", "x*2", "(2)*x", "2**1*x"],
             &["x^2 * x", "x**3", "x*x*x"],
             &["-(x + 1)", "-x - 1", "0 - x - 1"],
@@ -345,7 +404,11 @@ mod tests {
             &["x/2", "x*0.5", "(1/2)*x"],
             &["sin(x)^2 + cos(x)^2", "cos(x)^2 + sin(x)^2"],
             &["a = b", "b = a"],
-            &["x = 1 and y = 2", "y = 2 and x = 1", "(x = 1) and (y = 2) and true"],
+            &[
+                "x = 1 and y = 2",
+                "y = 2 and x = 1",
+                "(x = 1) and (y = 2) and true",
+            ],
             &["not not (x = 1)", "x = 1"],
         ];
         for group in groups {
@@ -411,8 +474,64 @@ mod tests {
         for s in samples {
             let e = p(s);
             let printed = e.to_string();
-            assert_eq!(p(&printed), e, "round trip failed for {s:?} printed as {printed:?}");
+            assert_eq!(
+                p(&printed),
+                e,
+                "round trip failed for {s:?} printed as {printed:?}"
+            );
         }
         assert_eq!(format!("{}", p("2*x")), "2*x");
+    }
+
+    #[test]
+    fn large_literals_reparse_exactly() {
+        let big = Expr::power(Expr::int(2), Expr::int(200));
+        let printed = big.to_string();
+        assert_eq!(p(&printed), big);
+        match p("0.000000000000000000000000000000000000000001") {
+            Expr::Const(n) => {
+                assert!(n.numer().is_one());
+                assert_eq!(n.denom().to_string(), alloc::format!("1{}", "0".repeat(42)));
+            }
+            other => panic!("expected a constant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sqrt_is_a_power_of_one_half() {
+        assert_eq!(
+            p("sqrt(2)"),
+            Expr::power(Expr::int(2), Expr::rational(1, 2).unwrap())
+        );
+    }
+
+    #[test]
+    fn unknown_function_calls_are_errors() {
+        assert!(matches!(parse("foo(x)"), Err(Error::Parse { .. })));
+        // Juxtaposition with no parenthesis after the name is still multiplication.
+        assert_eq!(p("x y"), p("x*y"));
+        assert_eq!(p("x*(y)"), p("x*y"));
+    }
+
+    #[test]
+    fn nesting_is_capped_not_overflowed() {
+        let deep = |n: usize| {
+            let mut s = alloc::string::String::new();
+            for _ in 0..n {
+                s.push('(');
+            }
+            s.push('x');
+            for _ in 0..n {
+                s.push(')');
+            }
+            s
+        };
+        assert!(parse(&deep(MAX_PARSE_DEPTH - 1)).is_ok());
+        assert!(matches!(
+            parse(&deep(MAX_PARSE_DEPTH * 4)),
+            Err(Error::Parse { .. })
+        ));
+        let negs = alloc::format!("{}x", "-".repeat(MAX_PARSE_DEPTH * 4));
+        assert!(matches!(parse(&negs), Err(Error::Parse { .. })));
     }
 }

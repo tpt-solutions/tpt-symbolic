@@ -24,12 +24,18 @@ pub struct Number {
 impl Number {
     /// Exact zero.
     pub fn zero() -> Number {
-        Number { num: BigInt::zero(), den: BigInt::one() }
+        Number {
+            num: BigInt::zero(),
+            den: BigInt::one(),
+        }
     }
 
     /// Exact one.
     pub fn one() -> Number {
-        Number { num: BigInt::one(), den: BigInt::one() }
+        Number {
+            num: BigInt::one(),
+            den: BigInt::one(),
+        }
     }
 
     /// Exact negative one.
@@ -39,7 +45,10 @@ impl Number {
 
     /// Embeds an integer.
     pub fn from_int(n: i128) -> Number {
-        Number { num: BigInt::from_i128(n), den: BigInt::one() }
+        Number {
+            num: BigInt::from_i128(n),
+            den: BigInt::one(),
+        }
     }
 
     /// Builds `num / den` in lowest terms. Returns `None` when `den == 0`.
@@ -53,7 +62,11 @@ impl Number {
         if den.is_zero() {
             return None;
         }
-        let (num, den) = if den.is_negative() { (num.negate(), den.negate()) } else { (num, den) };
+        let (num, den) = if den.is_negative() {
+            (num.negate(), den.negate())
+        } else {
+            (num, den)
+        };
         if num.is_zero() {
             return Some(Number::zero());
         }
@@ -104,7 +117,19 @@ impl Number {
 
     /// Exact negation.
     pub fn checked_neg(&self) -> Option<Number> {
-        Some(Number { num: self.num.negate(), den: self.den.clone() })
+        Some(Number {
+            num: self.num.negate(),
+            den: self.den.clone(),
+        })
+    }
+
+    /// Orders the values numerically (`1/3 < 1/2`).
+    ///
+    /// The derived `Ord` is structural and gives `1/2 < 1/3`, so use this when
+    /// the order of the values matters.
+    pub fn cmp_value(&self, other: &Number) -> core::cmp::Ordering {
+        // Denominators are positive, so cross-multiplying keeps the order.
+        self.num.mul(&other.den).cmp(&other.num.mul(&self.den))
     }
 
     /// Exact sum.
@@ -141,7 +166,11 @@ impl Number {
         if n > MAX_POW_EXPONENT {
             return None;
         }
-        let mut base = if exp < 0 { self.checked_recip()? } else { self.clone() };
+        let mut base = if exp < 0 {
+            self.checked_recip()?
+        } else {
+            self.clone()
+        };
         let mut e = n;
         let mut acc = Number::one();
         while e > 0 {
@@ -269,7 +298,11 @@ mod tests {
     #[test]
     fn third_plus_third_plus_third_is_exactly_one() {
         let third = q(1, 3);
-        let sum = third.checked_add(&third).unwrap().checked_add(&third).unwrap();
+        let sum = third
+            .checked_add(&third)
+            .unwrap()
+            .checked_add(&third)
+            .unwrap();
         assert_eq!(sum, Number::one());
         assert_eq!(third_times_three::<Number>(), Some(Number::one()));
     }
@@ -290,7 +323,10 @@ mod tests {
         let squared = two_200.checked_mul(&two_200).unwrap();
         assert_eq!(squared.checked_div(&two_200).unwrap(), two_200);
         assert_eq!(squared.as_i128(), None);
-        assert_eq!(format!("{}", Number::from_int(2).checked_pow(64).unwrap()), "18446744073709551616");
+        assert_eq!(
+            format!("{}", Number::from_int(2).checked_pow(64).unwrap()),
+            "18446744073709551616"
+        );
     }
 
     #[test]
@@ -302,5 +338,14 @@ mod tests {
     fn display_round_trips_shape() {
         assert_eq!(format!("{}", q(-3, 6)), "-1/2");
         assert_eq!(format!("{}", q(4, 2)), "2");
+    }
+
+    #[test]
+    fn cmp_value_orders_numerically_not_structurally() {
+        use core::cmp::Ordering::{Equal, Greater, Less};
+        // The structural order puts 1/2 before 1/3; the value order does not.
+        assert_eq!(q(1, 2).cmp_value(&q(1, 3)), Greater);
+        assert_eq!(q(-1, 2).cmp_value(&q(1, 3)), Less);
+        assert_eq!(q(2, 4).cmp_value(&q(1, 2)), Equal);
     }
 }

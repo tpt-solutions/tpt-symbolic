@@ -4,9 +4,9 @@
 //! has an empty magnitude and is never negative, so the representation is
 //! canonical and the derived `PartialEq`/`Hash` are correct.
 //!
-//! Division is bitwise long division, which is quadratic in the operand size.
-//! That is fine for the sizes this crate produces. `gcd` uses the binary
-//! (Stein) algorithm, which avoids repeated long division.
+//! Division is Knuth's Algorithm D over `u64` limbs, which is quadratic in the
+//! operand size. That is fine for the sizes this crate produces. `gcd` uses the
+//! binary (Stein) algorithm, which avoids repeated long division.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -196,7 +196,11 @@ fn mag_shr(a: &[u64], n: u64) -> Vec<u64> {
     let mut out = Vec::with_capacity(src.len());
     for i in 0..src.len() {
         let lo = src[i] >> s;
-        let hi = if s > 0 && i + 1 < src.len() { src[i + 1] << (64 - s) } else { 0 };
+        let hi = if s > 0 && i + 1 < src.len() {
+            src[i + 1] << (64 - s)
+        } else {
+            0
+        };
         out.push(lo | hi);
     }
     trim(out)
@@ -254,7 +258,10 @@ fn mag_gcd(a: &[u64], b: &[u64]) -> Vec<u64> {
 impl BigInt {
     /// The integer zero.
     pub const fn zero() -> BigInt {
-        BigInt { neg: false, mag: Vec::new() }
+        BigInt {
+            neg: false,
+            mag: Vec::new(),
+        }
     }
 
     /// The integer one.
@@ -310,7 +317,11 @@ impl BigInt {
         if self.mag.len() > 2 {
             return None;
         }
-        let m = self.mag.iter().rev().fold(0u128, |acc, &l| (acc << 64) | l as u128);
+        let m = self
+            .mag
+            .iter()
+            .rev()
+            .fold(0u128, |acc, &l| (acc << 64) | l as u128);
         if self.neg {
             if m <= i128::MAX as u128 + 1 {
                 Some((m as i128).wrapping_neg())
@@ -329,7 +340,12 @@ impl BigInt {
         if self.neg || self.mag.len() > 2 {
             return None;
         }
-        Some(self.mag.iter().rev().fold(0u128, |acc, &l| (acc << 64) | l as u128))
+        Some(
+            self.mag
+                .iter()
+                .rev()
+                .fold(0u128, |acc, &l| (acc << 64) | l as u128),
+        )
     }
 
     /// Sum.
@@ -360,7 +376,10 @@ impl BigInt {
             return None;
         }
         let (q, r) = mag_divrem(&self.mag, &o.mag);
-        Some((BigInt::make(self.neg != o.neg, q), BigInt::make(self.neg, r)))
+        Some((
+            BigInt::make(self.neg != o.neg, q),
+            BigInt::make(self.neg, r),
+        ))
     }
 
     /// Greatest common divisor of the absolute values. Always non-negative.
@@ -467,7 +486,12 @@ mod tests {
 
     #[test]
     fn arithmetic_matches_i128_in_range() {
-        for (a, b) in [(7i128, -3i128), (-12345, 678), (0, -5), (i64::MAX as i128, i64::MIN as i128)] {
+        for (a, b) in [
+            (7i128, -3i128),
+            (-12345, 678),
+            (0, -5),
+            (i64::MAX as i128, i64::MIN as i128),
+        ] {
             let (x, y) = (BigInt::from_i128(a), BigInt::from_i128(b));
             assert_eq!(x.add(&y).to_i128(), Some(a + b));
             assert_eq!(x.sub(&y).to_i128(), Some(a - b));
@@ -486,9 +510,15 @@ mod tests {
         for _ in 0..199 {
             p = p.mul(&BigInt::from_i128(2));
         }
-        assert_eq!(format!("{p}"), "1606938044258990275541962092341162602522202993782792835301376");
+        assert_eq!(
+            format!("{p}"),
+            "1606938044258990275541962092341162602522202993782792835301376"
+        );
         assert_eq!(p.to_i128(), None);
-        assert_eq!(big("-123456789012345678901234567890").to_string(), "-123456789012345678901234567890");
+        assert_eq!(
+            big("-123456789012345678901234567890").to_string(),
+            "-123456789012345678901234567890"
+        );
     }
 
     #[test]
@@ -568,7 +598,11 @@ mod tests {
         // floor(sqrt(2) * 10^k) has k + 1 digits.
         assert_eq!(digits.len(), k as usize + 1);
         // Known leading digits of sqrt(2).
-        assert!(digits.starts_with("14142135623730950488016887242096980785696718753769"), "{}", &digits[..60]);
+        assert!(
+            digits.starts_with("14142135623730950488016887242096980785696718753769"),
+            "{}",
+            &digits[..60]
+        );
         // Exact bounds: root^2 <= 2*10^(2k) < (root+1)^2, checked in integers.
         let target = BigInt::from_i128(2).mul(&sqrt2_digits_square_base(k));
         let next = root.add(&BigInt::one());
@@ -584,5 +618,65 @@ mod tests {
             acc = acc.mul(&ten);
         }
         acc
+    }
+}
+
+#[cfg(test)]
+mod differential_tests {
+    use super::*;
+    use crate::testkit::Rng;
+
+    /// A random i128 whose magnitude is spread across the full bit range, so small,
+    /// single-limb and multi-limb operands all occur.
+    fn sample(rng: &mut Rng) -> i128 {
+        let raw = ((rng.next_u64() as u128) << 64) | rng.next_u64() as u128;
+        let shift = rng.below(128) as u32;
+        let v = (raw >> shift) as i128;
+        // wrapping_neg: negating i128::MIN must not panic in a debug build.
+        if rng.below(2) == 0 {
+            v
+        } else {
+            v.wrapping_neg()
+        }
+    }
+
+    /// `BigInt` agrees with `i128` wherever the `i128` result is defined.
+    #[test]
+    fn arithmetic_matches_i128_where_it_fits() {
+        let mut rng = Rng::new(31337);
+        for _ in 0..5000 {
+            let (a, b) = (sample(&mut rng), sample(&mut rng));
+            let (ba, bb) = (BigInt::from_i128(a), BigInt::from_i128(b));
+            if let Some(s) = a.checked_add(b) {
+                assert_eq!(ba.add(&bb).to_i128(), Some(s), "{a} + {b}");
+            }
+            if let Some(d) = a.checked_sub(b) {
+                assert_eq!(ba.sub(&bb).to_i128(), Some(d), "{a} - {b}");
+            }
+            if let Some(p) = a.checked_mul(b) {
+                assert_eq!(ba.mul(&bb).to_i128(), Some(p), "{a} * {b}");
+            }
+            if let (Some(q), Some(r)) = (a.checked_div(b), a.checked_rem(b)) {
+                let (bq, br) = ba.divrem(&bb).expect("divisor is non-zero");
+                assert_eq!(bq.to_i128(), Some(q), "{a} / {b}");
+                assert_eq!(br.to_i128(), Some(r), "{a} % {b}");
+            }
+        }
+    }
+
+    /// Division identity on values too large for i128: a = q*b + r, 0 <= |r| < |b|.
+    #[test]
+    fn division_identity_holds_beyond_i128() {
+        let mut rng = Rng::new(271828);
+        for _ in 0..500 {
+            let a = BigInt::from_i128(sample(&mut rng)).mul(&BigInt::from_i128(sample(&mut rng)));
+            let b = BigInt::from_i128(sample(&mut rng)).mul(&BigInt::from_i128(sample(&mut rng)));
+            if b.is_zero() {
+                continue;
+            }
+            let (q, r) = a.divrem(&b).expect("divisor is non-zero");
+            assert_eq!(q.mul(&b).add(&r), a, "a = q*b + r failed");
+            assert!(r.abs() < b.abs(), "remainder not smaller than divisor");
+        }
     }
 }

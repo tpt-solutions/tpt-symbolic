@@ -17,8 +17,8 @@
 //! discriminants are assumed non-negative. Both assumptions are stated here
 //! and are not checked.
 
-use crate::error::Error;
 use crate::bigint::BigInt;
+use crate::error::Error;
 use crate::expr::Expr;
 use crate::mathr::Number;
 use crate::simplify::simplify;
@@ -67,6 +67,9 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
         Expr::Bool(false) => return Ok(SolveResult::NoSolution),
         _ => {}
     }
+    if !f.is_arithmetic() {
+        return Err(Error::Unsupported("solve expects an arithmetic equation"));
+    }
     if !f.contains_var(var) {
         return Ok(match f.as_number() {
             Some(n) if n.is_zero() => SolveResult::Infinite,
@@ -78,7 +81,10 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
         return Ok(numeric(f, var));
     };
     let mut coeffs: Vec<Expr> = coeffs.iter().map(simplify).collect();
-    while coeffs.last().is_some_and(|c| c.as_number().is_some_and(|n| n.is_zero())) {
+    while coeffs
+        .last()
+        .is_some_and(|c| c.as_number().is_some_and(|n| n.is_zero()))
+    {
         coeffs.pop();
     }
     Ok(match coeffs.len() {
@@ -96,7 +102,10 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
 }
 
 fn numeric(expr: Expr, var: &str) -> SolveResult {
-    SolveResult::Numeric(SymbolicRoot { expr, var: Arc::from(var) })
+    SolveResult::Numeric(SymbolicRoot {
+        expr,
+        var: Arc::from(var),
+    })
 }
 
 /// Roots of `a*y^2 + b*y + c = 0`.
@@ -112,7 +121,10 @@ fn quadratic(a: &Expr, b: &Expr, c: &Expr) -> SolveResult {
     }
 
     let four_ac = Expr::product(vec![Expr::int(4), a.clone(), c.clone()]);
-    let disc = simplify(&Expr::difference(Expr::power(b.clone(), Expr::int(2)), four_ac));
+    let disc = simplify(&Expr::difference(
+        Expr::power(b.clone(), Expr::int(2)),
+        four_ac,
+    ));
     if disc.as_number().is_some_and(|n| n.is_negative()) {
         return SolveResult::NoSolution;
     }
@@ -123,11 +135,17 @@ fn quadratic(a: &Expr, b: &Expr, c: &Expr) -> SolveResult {
         Expr::sum(vec![neg_b.clone(), root.clone()]),
         denom.clone(),
     ));
-    let minus = simplify(&Expr::quotient(Expr::sum(vec![neg_b, Expr::negate(root)]), denom));
+    let minus = simplify(&Expr::quotient(
+        Expr::sum(vec![neg_b, Expr::negate(root)]),
+        denom,
+    ));
     exact_roots(vec![plus, minus])
 }
 
 fn exact_roots(mut roots: Vec<Expr>) -> SolveResult {
+    if roots.is_empty() {
+        return SolveResult::NoSolution;
+    }
     roots.sort();
     roots.dedup();
     SolveResult::Exact(roots)
@@ -158,14 +176,23 @@ fn rational_roots(low: &[Number]) -> Option<Vec<Expr>> {
         if poly.len() <= 3 {
             break;
         }
-        let r = find_rational_root(&poly)?;
+        let Some(r) = find_rational_root(&poly) else {
+            // No rational root. A pure power equation `a*x^n + c = 0` still has
+            // exact real roots, so use those; anything else stays numeric.
+            roots.extend(pure_power_roots(&poly)?);
+            return Some(roots);
+        };
         poly = divide_by_linear(&poly, &r)?;
         roots.push(Expr::Const(r));
     }
     match poly.as_slice() {
         [c] if !c.is_zero() => {}
         [a1, a0] => roots.push(Expr::Const(a0.checked_div(a1)?.checked_neg()?)),
-        [a, b, c] => match quadratic(&Expr::Const(a.clone()), &Expr::Const(b.clone()), &Expr::Const(c.clone())) {
+        [a, b, c] => match quadratic(
+            &Expr::Const(a.clone()),
+            &Expr::Const(b.clone()),
+            &Expr::Const(c.clone()),
+        ) {
             SolveResult::Exact(v) => roots.extend(v),
             SolveResult::NoSolution => {}
             _ => return None,
@@ -175,13 +202,48 @@ fn rational_roots(low: &[Number]) -> Option<Vec<Expr>> {
     Some(roots)
 }
 
+/// Real roots of `a*x^n + c = 0` (highest degree first, `n >= 3`), in exact form.
+///
+/// Returns `None` for any other shape. Even `n` with a negative `-c/a` has no real
+/// roots, and gives an empty list.
+fn pure_power_roots(poly: &[Number]) -> Option<Vec<Expr>> {
+    let n = poly.len().checked_sub(1)?;
+    if n < 3 || poly[1..n].iter().any(|c| !c.is_zero()) {
+        return None;
+    }
+    let (lead, konst) = (poly.first()?, poly.last()?);
+    if lead.is_zero() || konst.is_zero() {
+        return None;
+    }
+    // x^n = r, with r = -c/a.
+    let r = konst.checked_div(lead)?.checked_neg()?;
+    let negative = r.is_negative();
+    let magnitude = if negative { r.checked_neg()? } else { r };
+    let root = simplify(&Expr::power(
+        Expr::Const(magnitude),
+        Expr::rational(1, n as i128)?,
+    ));
+    if n % 2 == 1 {
+        return Some(vec![if negative { Expr::negate(root) } else { root }]);
+    }
+    if negative {
+        return Some(Vec::new());
+    }
+    Some(vec![root.clone(), Expr::negate(root)])
+}
+
 /// A rational root of `poly` (highest degree first, non-zero constant term), if one is found.
 fn find_rational_root(poly: &[Number]) -> Option<Number> {
     let ints = integer_scale(poly)?;
     let constant = ints.last()?.abs().to_u128()?;
     let leading = ints.first()?.abs().to_u128()?;
+    // Candidates are built as i128, so larger coefficients fall back to numeric.
+    if constant > i128::MAX as u128 || leading > i128::MAX as u128 {
+        return None;
+    }
+    let leading_divisors = divisors(leading)?;
     for &p in &divisors(constant)? {
-        for &q in &divisors(leading)? {
+        for &q in &leading_divisors {
             for sign in [1i128, -1] {
                 let Some(r) = Number::from_parts(
                     BigInt::from_i128(sign * p as i128),
@@ -387,7 +449,9 @@ pub fn solve_linear_system(a: &[Vec<Number>], b: &[Number]) -> Result<SolveResul
         })
         .collect();
     let pivots = rref(&mut m, n)?;
-    if m.iter().any(|row| row[..n].iter().all(|x| x.is_zero()) && !row[n].is_zero()) {
+    if m.iter()
+        .any(|row| row[..n].iter().all(|x| x.is_zero()) && !row[n].is_zero())
+    {
         return Ok(SolveResult::NoSolution);
     }
     if pivots.len() < n {
@@ -407,6 +471,9 @@ pub fn nullspace(a: &[Vec<Number>]) -> Result<Vec<Vec<Number>>, Error> {
         return Ok(Vec::new());
     }
     let n = a[0].len();
+    if a.iter().any(|row| row.len() != n) {
+        return Err(Error::Unsupported("ragged coefficient matrix"));
+    }
     let mut m: Vec<Vec<Number>> = a.to_vec();
     let pivots = rref(&mut m, n)?;
     let mut basis = Vec::new();
@@ -426,7 +493,9 @@ pub fn nullspace(a: &[Vec<Number>]) -> Result<Vec<Vec<Number>>, Error> {
 pub fn primitive_integer_vector(v: &[Number]) -> Result<Vec<i128>, Error> {
     let mut lcm = BigInt::one();
     for x in v {
-        let (q, _) = lcm.divrem(&lcm.gcd(x.denom())).ok_or(Error::DivisionByZero)?;
+        let (q, _) = lcm
+            .divrem(&lcm.gcd(x.denom()))
+            .ok_or(Error::DivisionByZero)?;
         lcm = q.mul(x.denom());
     }
     let mut ints: Vec<BigInt> = Vec::with_capacity(v.len());
@@ -441,12 +510,18 @@ pub fn primitive_integer_vector(v: &[Number]) -> Result<Vec<i128>, Error> {
             *x = q;
         }
     }
-    if ints.iter().find(|x| !x.is_zero()).is_some_and(|x| x.is_negative()) {
+    if ints
+        .iter()
+        .find(|x| !x.is_zero())
+        .is_some_and(|x| x.is_negative())
+    {
         for x in ints.iter_mut() {
             *x = x.negate();
         }
     }
-    ints.iter().map(|x| x.to_i128().ok_or(Error::Overflow)).collect()
+    ints.iter()
+        .map(|x| x.to_i128().ok_or(Error::Overflow))
+        .collect()
 }
 
 #[cfg(test)]
@@ -464,8 +539,14 @@ mod tests {
 
     #[test]
     fn linear_equation() {
-        assert_eq!(solve(&p("2*x + 6 = 0"), "x").unwrap(), SolveResult::Exact(vec![p("-3")]));
-        assert_eq!(solve(&p("x = 1/3 + 1/3 + 1/3"), "x").unwrap(), SolveResult::Exact(vec![p("1")]));
+        assert_eq!(
+            solve(&p("2*x + 6 = 0"), "x").unwrap(),
+            SolveResult::Exact(vec![p("-3")])
+        );
+        assert_eq!(
+            solve(&p("x = 1/3 + 1/3 + 1/3"), "x").unwrap(),
+            SolveResult::Exact(vec![p("1")])
+        );
     }
 
     #[test]
@@ -486,7 +567,10 @@ mod tests {
         // y^2 + x^2 = 25 -> y = ±sqrt(25 - x^2)
         let r = solve(&p("x^2 + y^2 = 25"), "y").unwrap();
         let root = p("(25 - x^2)^(1/2)");
-        assert_eq!(r, SolveResult::Exact(vec![Expr::negate(root.clone()), root]));
+        assert_eq!(
+            r,
+            SolveResult::Exact(vec![Expr::negate(root.clone()), root])
+        );
     }
 
     #[test]
@@ -510,7 +594,10 @@ mod tests {
     fn degenerate_and_impossible_cases() {
         assert_eq!(solve(&p("0 = 0"), "x").unwrap(), SolveResult::Infinite);
         assert_eq!(solve(&p("1 = 0"), "x").unwrap(), SolveResult::NoSolution);
-        assert_eq!(solve(&p("x^2 + 1 = 0"), "x").unwrap(), SolveResult::NoSolution);
+        assert_eq!(
+            solve(&p("x^2 + 1 = 0"), "x").unwrap(),
+            SolveResult::NoSolution
+        );
         assert_eq!(solve(&p("a = 0"), "x").unwrap(), SolveResult::Parametric);
     }
 
@@ -520,7 +607,43 @@ mod tests {
             SolveResult::Numeric(root) => assert_eq!(&*root.var, "x"),
             other => panic!("expected numeric hand-off, got {other:?}"),
         }
-        assert!(matches!(solve(&p("x^3 - 2 = 0"), "x").unwrap(), SolveResult::Numeric(_)));
+        // A cubic with no rational root and no pure-power shape stays numeric.
+        assert!(matches!(
+            solve(&p("x^3 + x + 1 = 0"), "x").unwrap(),
+            SolveResult::Numeric(_)
+        ));
+    }
+
+    #[test]
+    fn pure_power_equations_have_exact_real_roots() {
+        // x^3 = 2 has one real root; x^4 = 2 has two.
+        assert_eq!(
+            solve(&p("x^3 - 2 = 0"), "x").unwrap(),
+            SolveResult::Exact(vec![simplify(&Expr::power(
+                Expr::int(2),
+                Expr::rational(1, 3).unwrap(),
+            ))])
+        );
+        match solve(&p("x^4 - 2 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => assert_eq!(v.len(), 2),
+            other => panic!("expected exact roots, got {other:?}"),
+        }
+        // x^4 = -2 has no real roots.
+        assert_eq!(
+            solve(&p("x^4 + 2 = 0"), "x").unwrap(),
+            SolveResult::NoSolution
+        );
+        // x^3 = -8 has one real root, and it is rational.
+        assert_eq!(
+            solve(&p("x^3 + 8 = 0"), "x").unwrap(),
+            SolveResult::Exact(vec![Expr::int(-2)])
+        );
+    }
+
+    #[test]
+    fn nullspace_rejects_ragged_input() {
+        let a = vec![vec![q(1, 1), q(2, 1)], vec![q(3, 1)]];
+        assert!(matches!(nullspace(&a), Err(Error::Unsupported(_))));
     }
 
     #[test]
@@ -544,8 +667,14 @@ mod tests {
     #[test]
     fn inconsistent_and_underdetermined_systems() {
         let a = vec![vec![q(1, 1), q(1, 1)], vec![q(2, 1), q(2, 1)]];
-        assert_eq!(solve_linear_system(&a, &[q(1, 1), q(3, 1)]).unwrap(), SolveResult::NoSolution);
-        assert_eq!(solve_linear_system(&a, &[q(1, 1), q(2, 1)]).unwrap(), SolveResult::Parametric);
+        assert_eq!(
+            solve_linear_system(&a, &[q(1, 1), q(3, 1)]).unwrap(),
+            SolveResult::NoSolution
+        );
+        assert_eq!(
+            solve_linear_system(&a, &[q(1, 1), q(2, 1)]).unwrap(),
+            SolveResult::Parametric
+        );
     }
 
     #[test]
@@ -558,6 +687,26 @@ mod tests {
         ];
         let basis = nullspace(&a).unwrap();
         assert_eq!(basis.len(), 1);
-        assert_eq!(primitive_integer_vector(&basis[0]).unwrap(), vec![1, 5, 3, 4]);
+        assert_eq!(
+            primitive_integer_vector(&basis[0]).unwrap(),
+            vec![1, 5, 3, 4]
+        );
+    }
+
+    #[test]
+    fn logical_connectives_are_not_arithmetic_equations() {
+        assert!(matches!(
+            solve(&p("x = 1 and y = 2"), "x"),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            solve(&p("x = 1 or x = 2"), "x"),
+            Err(Error::Unsupported(_))
+        ));
+        // A top-level constant still means "always" or "never".
+        assert_eq!(
+            solve(&Expr::Bool(true), "x").unwrap(),
+            SolveResult::Infinite
+        );
     }
 }

@@ -5,6 +5,9 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Exact, pure-Rust symbolic mathematics engine (no_std + alloc)"
 readme = "README.md"
+rust-version = "1.87"
+keywords = ["symbolic", "cas", "algebra", "calculus", "no-std"]
+categories = ["mathematics", "science", "no-std"]
 
 [features]
 default = ["stub-mathr"]

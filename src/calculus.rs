@@ -35,6 +35,22 @@ fn rat(p: i128, q: i128) -> Expr {
     Expr::Const(Number::new(p, q).unwrap_or(Number::one()))
 }
 
+/// The `n`-th derivative of `e` with respect to `var`, simplified after each step.
+pub fn diff_n(e: &Expr, var: &str, n: usize) -> Result<Expr, Error> {
+    let mut cur = e.clone();
+    for _ in 0..n {
+        cur = diff(&cur, var)?;
+    }
+    Ok(cur)
+}
+
+/// The gradient of `e`: the partial derivative with respect to each of `vars`.
+///
+/// Each partial derivative treats the other names as constants.
+pub fn gradient(e: &Expr, vars: &[&str]) -> Result<Vec<Expr>, Error> {
+    vars.iter().map(|v| diff(e, v)).collect()
+}
+
 /// Derivative of `e` with respect to `var`, simplified.
 pub fn diff(e: &Expr, var: &str) -> Result<Expr, Error> {
     Ok(simplify(&diff_raw(e, var)?))
@@ -49,9 +65,12 @@ fn diff_raw(e: &Expr, var: &str) -> Result<Expr, Error> {
                 Expr::zero()
             }
         }
-        Expr::Const(_) | Expr::Bool(_) => Expr::zero(),
+        Expr::Const(_) => Expr::zero(),
         Expr::Add(v) => {
-            let terms = v.iter().map(|t| diff_raw(t, var)).collect::<Result<Vec<_>, _>>()?;
+            let terms = v
+                .iter()
+                .map(|t| diff_raw(t, var))
+                .collect::<Result<Vec<_>, _>>()?;
             Expr::sum(terms)
         }
         Expr::Mul(v) => {
@@ -70,7 +89,11 @@ fn diff_raw(e: &Expr, var: &str) -> Result<Expr, Error> {
             if !ex.contains_var(var) {
                 // Power rule with chain factor: x * b^(x-1) * b'.
                 let db = diff_raw(&base, var)?;
-                Expr::product(vec![ex.clone(), Expr::power(base.clone(), Expr::difference(ex, Expr::one())), db])
+                Expr::product(vec![
+                    ex.clone(),
+                    Expr::power(base.clone(), Expr::difference(ex, Expr::one())),
+                    db,
+                ])
             } else {
                 // Logarithmic differentiation: b^x * (x' ln b + x b'/b).
                 let dx = diff_raw(&ex, var)?;
@@ -83,18 +106,24 @@ fn diff_raw(e: &Expr, var: &str) -> Result<Expr, Error> {
                 Expr::product(vec![e.clone(), inner])
             }
         }
-        Expr::Func(SymbolicFunc::Log, a) if matches!(&**a, Expr::Func(SymbolicFunc::Abs, _)) => {
-            // d/dx log|t| = t'/t. Taking the chain rule through abs would leave |t|^-2 terms that do not simplify.
-            let Expr::Func(_, t) = &**a else { unreachable!() };
-            let dt = diff_raw(t, var)?;
-            Expr::product(vec![dt, Expr::power((**t).clone(), Expr::int(-1))])
-        }
         Expr::Func(f, a) => {
+            if *f == SymbolicFunc::Log {
+                if let Expr::Func(SymbolicFunc::Abs, t) = &**a {
+                    // d/dx log|t| = t'/t. Taking the chain rule through abs would leave |t|^-2 terms that do not simplify.
+                    let dt = diff_raw(t, var)?;
+                    return Ok(Expr::product(vec![
+                        dt,
+                        Expr::power((**t).clone(), Expr::int(-1)),
+                    ]));
+                }
+            }
             let da = diff_raw(a, var)?;
             Expr::product(vec![outer_derivative(*f, a), da])
         }
-        Expr::Eq(..) | Expr::And(_) | Expr::Or(_) | Expr::Not(_) => {
-            return Err(Error::Unsupported("differentiation of a boolean expression"));
+        Expr::Bool(_) | Expr::Eq(..) | Expr::And(_) | Expr::Or(_) | Expr::Not(_) => {
+            return Err(Error::Unsupported(
+                "differentiation of a boolean expression",
+            ));
         }
     })
 }
@@ -121,7 +150,10 @@ fn outer_derivative(f: SymbolicFunc, a: &Expr) -> Expr {
         SymbolicFunc::Tanh => Expr::power(Expr::func(SymbolicFunc::Cosh, a), Expr::int(-2)),
         SymbolicFunc::Exp => Expr::func(SymbolicFunc::Exp, a),
         SymbolicFunc::Log => Expr::power(a, Expr::int(-1)),
-        SymbolicFunc::Abs => Expr::product(vec![a.clone(), Expr::power(Expr::func(SymbolicFunc::Abs, a), Expr::int(-1))]),
+        SymbolicFunc::Abs => Expr::product(vec![
+            a.clone(),
+            Expr::power(Expr::func(SymbolicFunc::Abs, a), Expr::int(-1)),
+        ]),
     }
 }
 
@@ -162,14 +194,18 @@ fn structural(e: &Expr, var: &str, depth: usize) -> Option<Expr> {
     match e {
         Expr::Var(_) => {
             // Only reached when e is the variable itself.
-            Some(Expr::product(vec![rat(1, 2), Expr::power(e.clone(), Expr::int(2))]))
+            Some(Expr::product(vec![
+                rat(1, 2),
+                Expr::power(e.clone(), Expr::int(2)),
+            ]))
         }
         Expr::Add(v) => {
             let parts: Option<Vec<Expr>> = v.iter().map(|t| antideriv(t, var, depth)).collect();
             parts.map(Expr::sum)
         }
         Expr::Mul(v) => {
-            let (consts, vars): (Vec<Expr>, Vec<Expr>) = v.iter().cloned().partition(|f| !f.contains_var(var));
+            let (consts, vars): (Vec<Expr>, Vec<Expr>) =
+                v.iter().cloned().partition(|f| !f.contains_var(var));
             if vars.len() != 1 {
                 return None;
             }
@@ -217,6 +253,26 @@ fn basic_antiderivative(f: SymbolicFunc, t: Expr) -> Option<Expr> {
             SymbolicFunc::Log,
             Expr::func(SymbolicFunc::Abs, Expr::func(SymbolicFunc::Cos, t)),
         )),
+        // ∫ asin t dt = t asin t + sqrt(1 - t^2), and the same for acos and atan.
+        SymbolicFunc::Asin => Expr::sum(vec![
+            Expr::product(vec![t.clone(), Expr::func(SymbolicFunc::Asin, t.clone())]),
+            one_minus_square_root(t),
+        ]),
+        SymbolicFunc::Acos => Expr::difference(
+            Expr::product(vec![t.clone(), Expr::func(SymbolicFunc::Acos, t.clone())]),
+            one_minus_square_root(t),
+        ),
+        // ∫ atan t dt = t atan t - ln(1 + t^2) / 2.
+        SymbolicFunc::Atan => Expr::difference(
+            Expr::product(vec![t.clone(), Expr::func(SymbolicFunc::Atan, t.clone())]),
+            Expr::product(vec![
+                Expr::rational(1, 2).unwrap_or_else(Expr::one),
+                Expr::func(
+                    SymbolicFunc::Log,
+                    Expr::sum(vec![Expr::one(), Expr::power(t, Expr::int(2))]),
+                ),
+            ]),
+        ),
         // ∫ ln t dt = t ln t - t, valid for t > 0.
         SymbolicFunc::Log => Expr::sum(vec![
             Expr::product(vec![t.clone(), Expr::func(SymbolicFunc::Log, t.clone())]),
@@ -226,13 +282,27 @@ fn basic_antiderivative(f: SymbolicFunc, t: Expr) -> Option<Expr> {
     })
 }
 
+/// `sqrt(1 - t^2)`, the term that appears in the inverse-sine and inverse-cosine antiderivatives.
+fn one_minus_square_root(t: Expr) -> Expr {
+    let radicand = Expr::sum(vec![
+        Expr::one(),
+        Expr::negate(Expr::power(t, Expr::int(2))),
+    ]);
+    Expr::power(radicand, Expr::rational(1, 2).unwrap_or_else(Expr::one))
+}
+
 /// Simple u-substitution: find `g` inside the integrand such that the integrand
 /// divided by `g'` depends only on `g`. Then integrate in `u = g` and substitute back.
 fn substitution(e: &Expr, var: &str, depth: usize) -> Option<Expr> {
     if depth >= MAX_SUB_DEPTH {
         return None;
     }
-    let u_name = format!("_u{depth}");
+    // The substitution symbol must not clash with the variable or with any name
+    // already in the integrand, or the substituted form would be ambiguous.
+    let mut u_name = format!("_u{depth}");
+    while u_name == var || e.contains_var(&u_name) {
+        u_name.push('_');
+    }
     let u = Expr::var(&u_name);
 
     let mut candidates = Vec::new();
@@ -319,7 +389,10 @@ mod tests {
     #[test]
     fn power_rule_and_reciprocal() {
         assert_eq!(int_exact("x^2"), p("1/3*x^3"));
-        assert_eq!(int_exact("x^(-1)").to_string(), p("log(abs(x))").to_string());
+        assert_eq!(
+            int_exact("x^(-1)").to_string(),
+            p("log(abs(x))").to_string()
+        );
         assert_eq!(int_exact("3*x + sin(x)"), p("3/2*x^2 - cos(x)"));
     }
 
@@ -337,8 +410,14 @@ mod tests {
     #[test]
     fn failures_are_unevaluated_not_wrong() {
         // sin^2 needs a double-angle identity this engine does not have.
-        assert!(matches!(integrate(&p("sin(x)^2"), "x"), Integral::Unevaluated(_)));
-        assert!(matches!(integrate(&p("exp(x^3)"), "x"), Integral::Unevaluated(_)));
+        assert!(matches!(
+            integrate(&p("sin(x)^2"), "x"),
+            Integral::Unevaluated(_)
+        ));
+        assert!(matches!(
+            integrate(&p("exp(x^3)"), "x"),
+            Integral::Unevaluated(_)
+        ));
     }
 
     #[test]
@@ -354,6 +433,48 @@ mod tests {
                 checked += 1;
             }
         }
-        assert!(checked > 0, "random sample produced no closed forms to check");
+        assert!(
+            checked > 0,
+            "random sample produced no closed forms to check"
+        );
+    }
+
+    #[test]
+    fn higher_derivatives_and_gradients() {
+        assert_eq!(diff_n(&p("x^4"), "x", 2).unwrap(), p("12*x^2"));
+        assert_eq!(diff_n(&p("x^4"), "x", 0).unwrap(), p("x^4"));
+        assert_eq!(
+            gradient(&p("x*y"), &["x", "y"]).unwrap(),
+            vec![p("y"), p("x")]
+        );
+    }
+
+    #[test]
+    fn inverse_trig_antiderivatives_are_verified_exact() {
+        for src in ["asin(x)", "acos(x)", "atan(x)"] {
+            match integrate(&p(src), "x") {
+                Integral::Exact(f) => {
+                    assert_eq!(
+                        simplify(&diff(&f, "x").unwrap()),
+                        simplify(&p(src)),
+                        "{src}"
+                    );
+                }
+                other => panic!("{src}: expected an exact antiderivative, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn logical_operands_are_rejected_not_treated_as_numbers() {
+        assert!(matches!(
+            diff(&Expr::Bool(true), "x"),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(diff(&p("x = 1"), "x"), Err(Error::Unsupported(_))));
+        assert!(matches!(
+            integrate(&Expr::Bool(true), "x"),
+            Integral::Unevaluated(_)
+        ));
     }
 }

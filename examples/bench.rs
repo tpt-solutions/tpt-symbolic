@@ -30,12 +30,24 @@ fn main() {
     time("simplify: 500-term sum of sines", || simplify(&big));
     time("diff: 500-term sum of sines", || diff(&big, "x").unwrap());
 
-    let poly = Expr::power(Expr::sum(vec![x.clone(), y.clone(), Expr::int(1)]), Expr::int(6));
+    let poly = Expr::power(
+        Expr::sum(vec![x.clone(), y.clone(), Expr::int(1)]),
+        Expr::int(6),
+    );
     time("expand: (x + y + 1)^6", || expand(&poly));
 
-    let integrand = Expr::product(vec![x.clone(), Expr::func(SymbolicFunc::Cos, Expr::power(x.clone(), Expr::int(2)))]);
+    let integrand = Expr::product(vec![
+        x.clone(),
+        Expr::func(SymbolicFunc::Cos, Expr::power(x.clone(), Expr::int(2))),
+    ]);
     time("integrate: x*cos(x^2)", || integrate(&integrand, "x"));
 
-    let deg8 = Expr::sum((0..=8).map(|k| Expr::power(x.clone(), Expr::int(k))).collect());
-    let _ = time("solve: degree-8 polynomial", || solve(&Expr::equation(deg8, Expr::zero()), "x"));
+    let deg8 = Expr::sum(
+        (0..=8)
+            .map(|k| Expr::power(x.clone(), Expr::int(k)))
+            .collect(),
+    );
+    let _ = time("solve: degree-8 polynomial", || {
+        solve(&Expr::equation(deg8, Expr::zero()), "x")
+    });
 }

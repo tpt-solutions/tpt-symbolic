@@ -1,0 +1,9 @@
+[package]
+name = "my-symbolic-app"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Point this at a published version, or a git URL, once tpt-symbolic is released.
+tpt-symbolic = { path = ".." }

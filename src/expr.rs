@@ -15,6 +15,7 @@ use core::fmt;
 
 /// Built-in elementary functions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum SymbolicFunc {
     /// Sine.
     Sin,
@@ -87,6 +88,7 @@ impl SymbolicFunc {
 /// Operand order inside `Add`, `Mul`, `And` and `Or` is the derived `Ord`
 /// order. `Mul` keeps its exact constant, if any, as the first operand.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum Expr {
     /// A named variable.
     Var(Arc<str>),
@@ -156,6 +158,18 @@ impl Expr {
             }
             Expr::Pow(a, b) | Expr::Eq(a, b) => a.contains_var(name) || b.contains_var(name),
             Expr::Func(_, a) | Expr::Not(a) => a.contains_var(name),
+        }
+    }
+
+    /// `true` if no boolean, equation or logical node occurs anywhere in this
+    /// expression. Arithmetic operations are defined only on such trees.
+    pub fn is_arithmetic(&self) -> bool {
+        match self {
+            Expr::Var(_) | Expr::Const(_) => true,
+            Expr::Bool(_) | Expr::Eq(..) | Expr::And(_) | Expr::Or(_) | Expr::Not(_) => false,
+            Expr::Add(v) | Expr::Mul(v) => v.iter().all(Expr::is_arithmetic),
+            Expr::Pow(a, b) => a.is_arithmetic() && b.is_arithmetic(),
+            Expr::Func(_, a) => a.is_arithmetic(),
         }
     }
 
@@ -475,7 +489,8 @@ fn absorb_factor(f: Expr, coef: &mut Number, rest: &mut Vec<Expr>) {
 ///
 /// Uses `sqrt(p/q) = sqrt(p*q)/q`, then pulls out square factors up to 10^4.
 /// The result is `k/q * sqrt(m)`, so `sqrt(12)` gives `2*sqrt(3)`.
-/// Square factors above 10^4 are left inside the root (not fully reduced).
+/// Square factors above 10^4 are left inside the root, except that a remainder
+/// which is itself a perfect square is always folded (so `sqrt(10007^2)` is `10007`).
 fn sqrt_const(b: Number) -> Option<Expr> {
     if b.is_negative() {
         return None;
@@ -498,6 +513,12 @@ fn sqrt_const(b: Number) -> Option<Expr> {
             k = k.mul(&BigInt::from_i128(d));
         }
         d += 1;
+    }
+    if let Some(s) = rest.isqrt() {
+        if s.mul(&s) == rest {
+            k = k.mul(&s);
+            rest = BigInt::one();
+        }
     }
     let coef = Number::from_parts(k, b.denom().clone())?;
     if rest.is_one() {
@@ -581,12 +602,16 @@ fn has_negative_coefficient(t: &Expr) -> bool {
 /// The same term with its sign flipped, for printing `a - b` instead of `a + -b`.
 fn negate_term(t: &Expr) -> Expr {
     match t {
-        // i128::MIN has no positive counterpart; the parser never produces it.
+        // Number negation is exact, so this never falls back in practice.
         Expr::Const(c) => Expr::Const(c.checked_neg().unwrap_or(c.clone())),
         Expr::Mul(v) => {
-            let c = v[0].as_number().unwrap_or(Number::one());
+            // A leading numeric coefficient is folded into the sign. Without one,
+            // every factor stays, so `x*y` flips to `-x*y` rather than losing `x`.
+            let (c, rest) = match v.first().and_then(|e| e.as_number()) {
+                Some(c) => (c, v[1..].to_vec()),
+                None => (Number::one(), v.clone()),
+            };
             let flipped = c.checked_neg().unwrap_or(c);
-            let rest = v[1..].to_vec();
             if flipped.is_one() {
                 if rest.len() == 1 {
                     rest.into_iter().next().unwrap_or_else(Expr::one)
@@ -780,7 +805,10 @@ mod tests {
 
     #[test]
     fn square_roots_extract_square_factors() {
-        assert_eq!(Expr::power(Expr::int(4), Expr::rational(1, 2).unwrap()), Expr::int(2));
+        assert_eq!(
+            Expr::power(Expr::int(4), Expr::rational(1, 2).unwrap()),
+            Expr::int(2)
+        );
         let root12 = Expr::power(Expr::int(12), Expr::rational(1, 2).unwrap());
         let expected = Expr::product(vec![
             Expr::int(2),
@@ -804,18 +832,33 @@ mod tests {
     fn constant_distributes_over_single_sum() {
         // 2 * (x + 1) -> 2x + 2
         let e = Expr::product(vec![Expr::int(2), Expr::sum(vec![x(), Expr::int(1)])]);
-        assert_eq!(e, Expr::sum(vec![Expr::product(vec![Expr::int(2), x()]), Expr::int(2)]));
+        assert_eq!(
+            e,
+            Expr::sum(vec![Expr::product(vec![Expr::int(2), x()]), Expr::int(2)])
+        );
     }
 
     #[test]
     fn boolean_connectives_canonicalize() {
         let a = Expr::equation(x(), Expr::int(1));
         let b = Expr::equation(y(), Expr::int(2));
-        assert_eq!(Expr::and_all(vec![a.clone(), b.clone()]), Expr::and_all(vec![b.clone(), a.clone(), a.clone()]));
-        assert_eq!(Expr::and_all(vec![a.clone(), Expr::boolean(false)]), Expr::boolean(false));
-        assert_eq!(Expr::or_all(vec![a.clone(), Expr::boolean(true)]), Expr::boolean(true));
+        assert_eq!(
+            Expr::and_all(vec![a.clone(), b.clone()]),
+            Expr::and_all(vec![b.clone(), a.clone(), a.clone()])
+        );
+        assert_eq!(
+            Expr::and_all(vec![a.clone(), Expr::boolean(false)]),
+            Expr::boolean(false)
+        );
+        assert_eq!(
+            Expr::or_all(vec![a.clone(), Expr::boolean(true)]),
+            Expr::boolean(true)
+        );
         assert_eq!(Expr::logical_not(Expr::logical_not(a.clone())), a);
-        assert_eq!(Expr::equation(Expr::int(2), Expr::int(2)), Expr::boolean(true));
+        assert_eq!(
+            Expr::equation(Expr::int(2), Expr::int(2)),
+            Expr::boolean(true)
+        );
     }
 
     #[test]
@@ -836,5 +879,25 @@ mod tests {
         assert_eq!(Expr::negate(x()).to_string(), "-x");
         assert_eq!(Expr::power(x(), Expr::int(-1)).to_string(), "x^(-1)");
         assert_eq!(Expr::func(SymbolicFunc::Sin, x()).to_string(), "sin(x)");
+    }
+
+    #[test]
+    fn perfect_square_above_trial_bound_folds_to_its_root() {
+        // 10007 is above the 10^4 trial-division bound, so only the perfect-square
+        // check can fold this; it must agree with the canonical form of 10007.
+        let square = Expr::int(10007 * 10007);
+        let half = Expr::rational(1, 2).unwrap();
+        assert_eq!(Expr::power(square, half), Expr::int(10007));
+    }
+
+    #[test]
+    fn negated_product_without_coefficient_keeps_every_factor() {
+        // Guards negate_term's fallback for a product with no leading coefficient.
+        // Canonical trees rarely reach it, but if they do, no factor may be dropped.
+        let y = Expr::var("y");
+        let product = Expr::product(alloc::vec![x(), y.clone()]);
+        let diff = Expr::difference(Expr::int(1), product.clone());
+        assert_eq!(diff.to_string(), "1 - x*y");
+        assert_eq!(Expr::difference(y, product).to_string(), "y - x*y");
     }
 }
