@@ -23,20 +23,20 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [ ] `testkit` shim: property-test + golden-file helpers (or temporary use of a public crate in dev-deps only)
 
 ## Phase 1 — AST & Canonicalization (Weeks 1–3)
-- [ ] `Expr` enum: `Var(Arc<str>)`, `Const(Number)`, `Add`, `Mul`, `Pow`, `Func`, `Eq`, `And`, `Or`, `Not`, `Bool`
-- [ ] `SymbolicFunc` enum (Sin, Cos, Tan, Log, Exp, Sqrt?, … — decide list)
-- [ ] Smart constructors (`Expr::add`, `mul`, `pow`, …) so un-canonical nodes can't be built
-- [ ] Total ordering on `Expr` (variable name, then complexity) for deterministic sort
-- [ ] Flatten nested Add/Mul; fold constants (`2 + x + 3` → `x + 5`)
-- [ ] Identity handling in constructors (empty Add → 0, single-child unwrap, etc.)
-- [ ] Combine like terms / repeated factors policy (decide: canonical vs. simplify stage)
-- [ ] Subtraction/division/negation representation (via `Add`/`Mul`/`Pow(-1)`)
-- [ ] String parser (precedence, implicit multiplication?, functions, `=`)
-- [ ] Pretty printer (round-trips with parser)
-- [ ] `tpt-uir` serialization / deserialization
-- [ ] Tests: `a+b == b+a`, idempotent canonicalization, 1/3+1/3+1/3 == 1
-- [ ] Golden files: thousands of equivalent-syntax inputs → same AST
-- [ ] **Milestone:** parse, store, perfectly canonicalize expressions
+- [x] `Expr` enum: `Var(Arc<str>)`, `Const(Number)`, `Add`, `Mul`, `Pow`, `Func`, `Eq`, `And`, `Or`, `Not`, `Bool`
+- [x] `SymbolicFunc` enum (Sin, Cos, Tan, Log, Exp, Sqrt?, … — decide list)
+- [x] Smart constructors (`Expr::add`, `mul`, `pow`, …) so un-canonical nodes can't be built
+- [x] Total ordering on `Expr` (variable name, then complexity) for deterministic sort
+- [x] Flatten nested Add/Mul; fold constants (`2 + x + 3` → `x + 5`)
+- [x] Identity handling in constructors (empty Add → 0, single-child unwrap, etc.)
+- [x] Combine like terms / repeated factors policy (decide: canonical vs. simplify stage)
+- [x] Subtraction/division/negation representation (via `Add`/`Mul`/`Pow(-1)`)
+- [x] String parser (precedence, implicit multiplication?, functions, `=`)
+- [x] Pretty printer (round-trips with parser)
+- [x] `tpt-uir` serialization / deserialization
+- [x] Tests: `a+b == b+a`, idempotent canonicalization, 1/3+1/3+1/3 == 1
+- [ ] Golden files: thousands of equivalent-syntax inputs → same AST (partial: small corpus in `parse::tests`; scale-up pending)
+- [x] **Milestone:** parse, store, perfectly canonicalize expressions
 
 ## Phase 2 — Simplification Engine (Weeks 4–6)
 - [ ] Pattern type + matcher with variable bindings (incl. commutative/associative matching)
@@ -86,11 +86,11 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [ ] Rustdoc for every public item; README with pipeline example
 
 ## Proposed decisions (recommended; awaiting your OK)
-- [ ] `SymbolicFunc`: Sin, Cos, Tan, Asin, Acos, Atan, Sinh, Cosh, Tanh, Exp, Log (natural), Abs. No Sqrt (use `Pow(x, 1/2)`).
-- [ ] Like-term/like-factor collection (`x+x→2x`, `x*x→x^2`) happens in canonicalization; expansion and trig identities stay in `simplify`.
-- [ ] Parser: `^` (accept `**`), implicit multiplication, `=`, `and`/`or`/`not`, ASCII only.
-- [ ] Rust edition 2021; MSRV = current stable; licence MIT OR Apache-2.0 (match other TPT repos if different).
-- [ ] Other TPT repos are on GitHub: use stubs now, switch to git dependencies once URLs are available.
+- [x] `SymbolicFunc`: Sin, Cos, Tan, Asin, Acos, Atan, Sinh, Cosh, Tanh, Exp, Log (natural), Abs. No Sqrt (use `Pow(x, 1/2)`).
+- [x] Like-term/like-factor collection (`x+x→2x`, `x*x→x^2`) happens in canonicalization; expansion and trig identities stay in `simplify`.
+- [x] Parser: `^` (accept `**`), implicit multiplication, `=`, `and`/`or`/`not`, ASCII only.
+- [x] Rust edition 2021; MSRV = current stable; licence MIT OR Apache-2.0 (match other TPT repos if different).
+- [x] Other TPT repos are on GitHub: use stubs now, switch to git dependencies once URLs are available.
 
 ## Still needed from you
 - [ ] GitHub URLs for tpt-mathr, tpt-uir, tpt-testkit (and tpt-vertex / tpt-chemistry / tpt-concord / tpt-math)

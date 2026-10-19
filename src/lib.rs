@@ -33,4 +33,5 @@ pub mod uir;
 pub mod testkit;
 
 pub use error::Error;
+pub use expr::{Expr, SymbolicFunc};
 pub use mathr::Number;
