@@ -138,6 +138,13 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
 ///
 /// Other equations are answered exactly as [`solve`] answers them. Complex roots of
 /// higher-degree polynomials are not found.
+/// # Example
+/// ```
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::solve::{solve_complex, SolveResult};
+/// let r = solve_complex(&parse("x^2 + 1 = 0").unwrap(), "x").unwrap();
+/// assert!(matches!(r, SolveResult::Exact(ref v) if v.len() == 2));
+/// ```
 pub fn solve_complex(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
     let result = solve(equation, var)?;
     if !matches!(result, SolveResult::NoSolution) {

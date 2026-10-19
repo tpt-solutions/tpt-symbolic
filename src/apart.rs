@@ -24,6 +24,13 @@ use alloc::vec::Vec;
 const CHECK_POINTS: [i128; 7] = [-3, -2, -1, 0, 1, 2, 3];
 
 /// The decomposition `num / den` as an expression in `var`.
+/// # Example
+/// ```
+/// use tpt_symbolic::apart::partial_fractions;
+/// use tpt_symbolic::parse::parse;
+/// let d = partial_fractions(&parse("1").unwrap(), &parse("x^2 - 1").unwrap(), "x").unwrap();
+/// assert_eq!(d.to_string(), "-1/2*(x + 1)^(-1) + 1/2*(x - 1)^(-1)");
+/// ```
 pub fn partial_fractions(num: &Expr, den: &Expr, var: &str) -> Result<Expr, Error> {
     let p = dense_coefficients(num, var).ok_or(Error::Unsupported(
         "partial fractions need polynomial numerators",

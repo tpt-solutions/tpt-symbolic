@@ -50,6 +50,12 @@ pub struct Program {
 /// Compiles `e` over the variables `vars`.
 ///
 /// Fails on booleans, equations and logical connectives, and on any variable not in `vars`.
+/// # Example
+/// ```
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::program::compile;
+/// assert!(compile(&parse("x^2").unwrap(), &["x"]).is_ok());
+/// ```
 pub fn compile(e: &Expr, vars: &[&str]) -> Result<Program, Error> {
     let mut ops = Vec::new();
     emit(e, vars, &mut ops)?;
@@ -109,6 +115,14 @@ fn emit(e: &Expr, vars: &[&str], out: &mut Vec<Op>) -> Result<(), Error> {
 /// Supports constants, variables, sums, products, and powers with integer exponents.
 /// Constants `pi`, `e`, `i` and functions have no exact rational value and fail with
 /// [`Error::Unsupported`].
+/// # Example
+/// ```
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::program::{compile, run_exact};
+/// use tpt_symbolic::Number;
+/// let prog = compile(&parse("x^2 + 3*x").unwrap(), &["x"]).unwrap();
+/// assert_eq!(run_exact(&prog, &[Number::from_int(2)]).unwrap(), Number::from_int(10));
+/// ```
 pub fn run_exact(program: &Program, env: &[Number]) -> Result<Number, Error> {
     let mut stack: Vec<Number> = Vec::new();
     for op in &program.ops {

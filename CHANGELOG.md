@@ -39,6 +39,8 @@ use semantic versioning once v1.0.0 is released.
 - `simplify::simplify_trace`: the rule applications that produced a result.
 - Imaginary unit `i` (`Expr::I`) and `solve_complex`, which returns complex roots of quadratics.
 - Exact `sin` and `cos` at multiples of pi/12 (the `special-angle` rule).
+- Integration of `e^(ax)·sin(bx)` and `e^(ax)·cos(bx)` in closed form, and integration by parts with the logarithm differentiated (`x^2*log(x)`).
+- Doc examples for the new public functions.
 - Radical solutions: Cardano for cubics with one real root, and Ferrari for quartics whose resolvent cubic has a positive rational root.
 - Equations of the form `exp(u) = c`, `log(u) = c`, `1/u = c`, and `u^n = c` are inverted, and the inner equation is solved exactly.
 - `assume::simplify_assuming`: `abs` and `log(abs)` rules for variables declared positive.

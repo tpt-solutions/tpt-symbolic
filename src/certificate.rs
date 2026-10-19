@@ -87,6 +87,14 @@ fn is_zero(e: &Expr) -> bool {
 }
 
 /// Certificate that `value` is a root of `expr` in `var`.
+/// # Example
+/// ```
+/// use tpt_symbolic::certificate::root_certificate;
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::Expr;
+/// let c = root_certificate(&parse("x^2 - 4").unwrap(), "x", &Expr::int(2));
+/// assert!(c.check());
+/// ```
 pub fn root_certificate(expr: &Expr, var: &str, value: &Expr) -> Certificate {
     Certificate::Root {
         expr: expr.clone(),

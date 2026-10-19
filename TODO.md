@@ -132,9 +132,9 @@ has a test or was checked by hand.
 - [x] Constants `pi`, `e`: new `Expr::Pi` and `Expr::E` variants (appended, so existing `Ord` order is unchanged). Parsed from the names `pi` and `e`, which are no longer variables. This is a behaviour change: `e` used as a variable name now means Euler's number (it is in CHANGELOG). `eval` returns `Unsupported`, because they are irrational. `diff` treats them as constants. `sqrt` as sugar is done
 - [x] Ergonomics: `+ - * / -` on `Expr`, `From<i64>`, `From<Number>`, `subs(expr, var, value)`. `From<&str>` is not added; use `str::parse`, which `FromStr` already provides
 - [x] LaTeX printer (`latex.rs`). MathML later
-- [x] Calculus: n-th and partial derivatives, Asin/Acos/Atan and tanh antiderivatives, integration by parts for `x^n · g(x)`, expansion fallback for `integrate`, and conservative definite integrals (regular integrands only). Not done: integration by parts beyond that shape. Definite integrals over singular integrands are refused on purpose.
+- [x] Calculus: n-th and partial derivatives, Asin/Acos/Atan and tanh antiderivatives, integration by parts (`x^n · g(x)`, and `u` differentiated for `log(x)·x^2`), `e^(ax)·sin/cos(bx)` in closed form, expansion fallback for `integrate`, and conservative definite integrals (regular integrands only). Not done: integration of `x·atan(x)`-type products, where the algebraic factor must be integrated into a rational function. Definite integrals over singular integrands are refused on purpose.
 - [x] Algebra: `factor` (complete to degree 4, marked incomplete beyond), polynomial gcd, partial fractions, cubic and quartic radicals (see line 70), and inversion of one layer of `exp`, `log`, reciprocal or integer powers.
-- [ ] Assumptions API (partial): `positive` is done and drives `simplify_assuming` (`abs`, `log(abs)`, `sqrt(x^n)`). Not done: `nonzero` and `real`. The default simplifier still combines `x*x^-1` into `1` (it assumes nonzero). Guarding that needs a decision, because changing the default changes canonical forms everywhere.
+- [x] Assumptions API. Decision (recommendation followed): keep the default simplifier's `x*x^-1 → 1` (it assumes `x ≠ 0`), documented in README and in `simplify`. `positive` drives `simplify_assuming` (`abs`, `log(abs)`, `sqrt(x^n)`). `nonzero` and `real` are not added, since no rule would use them yet.
 - [x] Symbolic matrix type (det, inverse, product, solve; cofactor limit 7 for symbolic entries); series and limits (`taylor`, `limit`, `limit_at_infinity`); complex numbers: the unit `i` with `solve_complex`. Not done for complex: Re, Im, conjugate, complex abs and log.
 
 ### Tier 3 — Innovative additions
@@ -144,14 +144,14 @@ has a test or was checked by hand.
 - [x] Exact-first hybrid with rigorous interval bounds: `interval` gives exact rational enclosures for polynomials and rational functions, proves root exclusion, and isolates roots. Transcendental functions have no exact rational enclosure and are refused.
 - [x] WASM build: `wasm` feature (`src/wasm.rs`) and `playground/` (a separate crate with a browser page). A Node smoke test passes. The browser page itself is not run here.
 - [x] Chemistry-balancing demo (`examples/balance_chemistry.rs`)
-- [ ] `serde` feature and binary `uir` format — **decision needed**: adding `serde` adds the crate's first dependency
+- [-] `serde` feature and binary `uir` format. Decision (recommendation followed): not added. The text `uir` codec covers serialisation, and `serde` would be the crate's first dependency for no current consumer. Revisit when a consumer asks.
 
 ### Tier 4 — Usability and automation
 - [x] Parse errors with line/column, caret snippet and "did you mean" (for unknown function names)
   - [x] `tpt-sym` shows the line and column, and the source line with a caret under the error (tested for multi-line input)
   - [x] "Did you mean" for unknown function names (`Error::UnknownFunction`). Unknown variable names are not errors by design, since any name is a variable.
   - [x] The library gives line and column through `error::line_col(src, pos)`. `Error::Parse` keeps its fields, so the change is non-breaking. An unknown function name is `Error::UnknownFunction { pos, name, suggestion }`, with a suggestion by optimal-string-alignment distance
-  - [ ] `Unsupported` messages are still generic (not addressed in this batch)
+  - [x] `Unsupported` messages name the operation. All 20 sites were reviewed.
 - [x] `tpt-sym` command-line tool (`src/bin/tpt-sym.rs`). A REPL is not built
 - [x] CI: `cargo fmt --check`, MSRV job on 1.87 (checked locally with `cargo +1.87.0`), Windows and macOS test runners, a feature matrix, a coverage job, and the float grep now ignores comment-only lines
 - [ ] CI: `cargo-semver-checks` — blocked: needs a published baseline, and the crate is unpublished (publishing is excluded)
@@ -168,7 +168,7 @@ has a test or was checked by hand.
 - [x] README rewrite: quickstart, command line, syntax table, exact-versus-approximate table, limits and assumptions, examples index
 - [x] `docs/cookbook.md`, with every block compiled and run as a doctest through `src/lib.rs`
 - [x] Starter `template/` project (builds and runs; uses a path dependency until a release exists). No `no_std` variant yet
-- [ ] docs.rs polish: the README is the crate overview. Per-function examples exist for many public items, but not every one yet
+- [x] docs.rs: examples added to the new public functions (`factor`, `gcd`, `partial_fractions`, `taylor`, `limit`, `limit_at_infinity`, `Matrix::det` and `inverse`, `enclose`, `compile`, `run_exact`, `simplify_trace`, `simplify_assuming`, `definite_integral`, `root_certificate`, `solve_complex`). Older items still have fewer examples than they could.
 - [x] CONTRIBUTING.md, with a walkthrough for adding a simplification rule
 - [x] Open decisions resolved by the recommended option: solver result enum is done (`SolveResult`). Partial-root variant, `Parametric` split and `pi`/`e` constants are done as additions. The `Parametric` split and the `e` name change alter behaviour and are recorded in CHANGELOG (see the review decisions above). `serde` stays deferred, so no new dependency
 - [x] Sibling-crate URLs: `tpt-mathr`, `tpt-uir`, `tpt-testkit` found and recorded. The tpt-vertex, tpt-chemistry and tpt-concord integrations are dropped by the user (see above)

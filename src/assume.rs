@@ -46,6 +46,13 @@ impl Assumptions {
 }
 
 /// Simplifies `e` with the rewrites that `assumptions` enable, repeated to a fixed point.
+/// # Example
+/// ```
+/// use tpt_symbolic::assume::{simplify_assuming, Assumptions};
+/// use tpt_symbolic::parse::parse;
+/// let positive = Assumptions::new().positive("x");
+/// assert_eq!(simplify_assuming(&parse("abs(x)").unwrap(), &positive).to_string(), "x");
+/// ```
 pub fn simplify_assuming(e: &Expr, assumptions: &Assumptions) -> Expr {
     let mut cur = simplify(e);
     for _ in 0..crate::simplify::MAX_PASSES {

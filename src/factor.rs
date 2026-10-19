@@ -103,6 +103,14 @@ pub(crate) fn poly_expr(coeffs: &[Number], var: &str) -> Expr {
 /// Factors the polynomial `e` in `var`.
 ///
 /// Errors when `e` is not a polynomial in `var` with rational coefficients, or is zero.
+/// # Example
+/// ```
+/// use tpt_symbolic::factor::factor;
+/// use tpt_symbolic::parse::parse;
+/// let f = factor(&parse("x^2 - 1").unwrap(), "x").unwrap();
+/// assert!(f.complete);
+/// assert_eq!(f.factors.len(), 2);
+/// ```
 pub fn factor(e: &Expr, var: &str) -> Result<Factorization, Error> {
     let coeffs = dense_coefficients(e, var).ok_or(Error::Unsupported(
         "factor needs a polynomial with rational coefficients",
@@ -398,6 +406,16 @@ mod tests {
 
 /// The greatest common divisor of two polynomials in `var`, monic, by the Euclidean
 /// algorithm over the rationals. `gcd(0, 0)` is `0`.
+/// # Example
+/// ```
+/// use tpt_symbolic::factor::{factor, gcd};
+/// use tpt_symbolic::parse::parse;
+/// let f = factor(&parse("x^2 - 1").unwrap(), "x").unwrap();
+/// assert!(f.complete);
+/// assert_eq!(f.factors.len(), 2);
+/// let g = gcd(&parse("x^2 - 1").unwrap(), &parse("x + 1").unwrap(), "x").unwrap();
+/// assert_eq!(g, tpt_symbolic::simplify::simplify(&parse("x + 1").unwrap()));
+/// ```
 pub fn gcd(a: &Expr, b: &Expr, var: &str) -> Result<Expr, Error> {
     let mut x = trim_low(dense_coefficients(a, var).ok_or(Error::Unsupported(
         "gcd needs polynomials with rational coefficients",

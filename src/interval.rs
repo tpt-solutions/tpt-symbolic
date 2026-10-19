@@ -122,6 +122,16 @@ fn max_of(xs: &[Number]) -> Option<Number> {
 ///
 /// `None` when `e` has a symbol other than `var`, a non-rational constant or function,
 /// a division by an interval that contains zero, or a boolean or equation node.
+/// # Example
+/// ```
+/// use tpt_symbolic::interval::{enclose, Interval};
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::Number;
+/// let iv = Interval::new(Number::from_int(1), Number::from_int(2)).unwrap();
+/// let r = enclose(&parse("x^2 - 2").unwrap(), "x", &iv).unwrap();
+/// assert_eq!(r.lo, Number::from_int(-1));
+/// assert_eq!(r.hi, Number::from_int(2));
+/// ```
 pub fn enclose(e: &Expr, var: &str, iv: &Interval) -> Option<Interval> {
     match e {
         Expr::Var(v) if &**v == var => Some(iv.clone()),

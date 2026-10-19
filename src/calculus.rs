@@ -189,6 +189,14 @@ pub fn integrate(e: &Expr, var: &str) -> Integral {
 /// points are the one way a definite integral gives a wrong number, so anything else
 /// (including `1/x`, `log`, `abs`, `tan`, `asin`, `acos` and fractional powers) is
 /// left unevaluated.
+/// # Example
+/// ```
+/// use tpt_symbolic::calculus::{definite_integral, Integral};
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::Expr;
+/// let r = definite_integral(&parse("x^2").unwrap(), "x", &Expr::zero(), &Expr::one());
+/// assert_eq!(r, Integral::Exact(Expr::rational(1, 3).unwrap()));
+/// ```
 pub fn definite_integral(e: &Expr, var: &str, lower: &Expr, upper: &Expr) -> Integral {
     if !is_regular(e) {
         return Integral::Unevaluated(e.clone());
@@ -264,8 +272,11 @@ fn structural(e: &Expr, var: &str, depth: usize) -> Option<Expr> {
             let (consts, vars): (Vec<Expr>, Vec<Expr>) =
                 v.iter().cloned().partition(|f| !f.contains_var(var));
             if vars.len() == 2 {
-                let body = by_parts(&vars[0], &vars[1], var, depth)
-                    .or_else(|| by_parts(&vars[1], &vars[0], var, depth))?;
+                let body = exp_times_trig(&vars[0], &vars[1], var)
+                    .or_else(|| by_parts(&vars[0], &vars[1], var, depth))
+                    .or_else(|| by_parts(&vars[1], &vars[0], var, depth))
+                    .or_else(|| by_parts_general(&vars[0], &vars[1], var, depth))
+                    .or_else(|| by_parts_general(&vars[1], &vars[0], var, depth))?;
                 let mut factors = consts;
                 factors.push(body);
                 return Some(Expr::product(factors));
@@ -316,6 +327,56 @@ fn by_parts(p: &Expr, g: &Expr, var: &str, depth: usize) -> Option<Expr> {
         Expr::product(vec![p.clone(), big_g]),
         second,
     ))
+}
+
+/// Integration by parts with `u` differentiated and `g` integrated, for any `u` whose
+/// derivative is simpler than `u`. Gives `u V - ∫ u' V dx`, where `V` is an antiderivative
+/// of `g`. Covers `log(x) * x^2` (differentiate the log), which the `x^n` form cannot.
+fn by_parts_general(u: &Expr, g: &Expr, var: &str, depth: usize) -> Option<Expr> {
+    if depth >= MAX_SUB_DEPTH {
+        return None;
+    }
+    let v = antideriv(g, var, depth)?;
+    let du = diff(u, var).ok()?;
+    let rest = simplify(&Expr::product(vec![v.clone(), du]));
+    let second = antideriv(&rest, var, depth + 1)?;
+    Some(Expr::difference(Expr::product(vec![u.clone(), v]), second))
+}
+
+/// `∫ e^(a x + c) sin(b x + d) dx` and the cosine case, for linear arguments.
+///
+/// `e^(a x + c) (a sin θ - b cos θ) / (a^2 + b^2)` for sine, and
+/// `e^(a x + c) (a cos θ + b sin θ) / (a^2 + b^2)` for cosine, where `θ = b x + d`.
+/// Either order of the two factors is accepted.
+fn exp_times_trig(p: &Expr, q: &Expr, var: &str) -> Option<Expr> {
+    let (exp_arg, trig_arg, is_sin) = match (p, q) {
+        (Expr::Func(SymbolicFunc::Exp, a), Expr::Func(SymbolicFunc::Sin, b))
+        | (Expr::Func(SymbolicFunc::Sin, b), Expr::Func(SymbolicFunc::Exp, a)) => (a, b, true),
+        (Expr::Func(SymbolicFunc::Exp, a), Expr::Func(SymbolicFunc::Cos, b))
+        | (Expr::Func(SymbolicFunc::Cos, b), Expr::Func(SymbolicFunc::Exp, a)) => (a, b, false),
+        _ => return None,
+    };
+    let a = linear_slope(exp_arg, var)?;
+    let b = linear_slope(trig_arg, var)?;
+    let denom = a.checked_mul(&a)?.checked_add(&b.checked_mul(&b)?)?;
+    let scale = Expr::Const(denom.checked_recip()?);
+    let exp_part = Expr::func(SymbolicFunc::Exp, (**exp_arg).clone());
+    let sin_part = Expr::func(SymbolicFunc::Sin, (**trig_arg).clone());
+    let cos_part = Expr::func(SymbolicFunc::Cos, (**trig_arg).clone());
+    let bracket = if is_sin {
+        // a sin - b cos
+        Expr::sum(vec![
+            Expr::product(vec![Expr::Const(a), sin_part]),
+            Expr::product(vec![Expr::Const(b.checked_neg()?), cos_part]),
+        ])
+    } else {
+        // a cos + b sin
+        Expr::sum(vec![
+            Expr::product(vec![Expr::Const(a), cos_part]),
+            Expr::product(vec![Expr::Const(b), sin_part]),
+        ])
+    };
+    Some(Expr::product(vec![exp_part, bracket, scale]))
 }
 
 /// `∫ b^n dx` for a linear base `b` and a constant exponent `n`.
@@ -548,6 +609,27 @@ mod tests {
     #[test]
     fn inverse_trig_antiderivatives_are_verified_exact() {
         for src in ["asin(x)", "acos(x)", "atan(x)"] {
+            match integrate(&p(src), "x") {
+                Integral::Exact(f) => {
+                    assert_eq!(
+                        simplify(&diff(&f, "x").unwrap()),
+                        simplify(&p(src)),
+                        "{src}"
+                    );
+                }
+                other => panic!("{src}: expected an exact antiderivative, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn exp_times_trig_and_log_times_power_are_verified() {
+        for src in [
+            "exp(x)*sin(x)",
+            "exp(2*x)*cos(3*x)",
+            "x^2*log(x)",
+            "x*log(x)",
+        ] {
             match integrate(&p(src), "x") {
                 Integral::Exact(f) => {
                     assert_eq!(

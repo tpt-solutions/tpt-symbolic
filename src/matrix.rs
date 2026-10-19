@@ -157,6 +157,16 @@ impl Matrix {
     ///
     /// Exact for numeric matrices at any size. Symbolic matrices are limited to
     /// [`MAX_SYMBOLIC_SIZE`].
+    /// # Example
+    /// ```
+    /// use tpt_symbolic::matrix::Matrix;
+    /// use tpt_symbolic::Expr;
+    /// let m = Matrix::from_rows(vec![
+    ///     vec![Expr::int(1), Expr::int(2)],
+    ///     vec![Expr::int(3), Expr::int(4)],
+    /// ]).unwrap();
+    /// assert_eq!(m.det().unwrap(), Expr::int(-2));
+    /// ```
     pub fn det(&self) -> Result<Expr, Error> {
         self.require_square()?;
         if let Some(rows) = self.numeric_rows() {
@@ -178,6 +188,17 @@ impl Matrix {
     /// For numeric matrices this is exact and fails with [`Error::DivisionByZero`] when
     /// the matrix is singular. For symbolic matrices, see the module note on the
     /// determinant assumption.
+    /// # Example
+    /// ```
+    /// use tpt_symbolic::matrix::Matrix;
+    /// use tpt_symbolic::Expr;
+    /// let m = Matrix::from_rows(vec![
+    ///     vec![Expr::int(1), Expr::int(2)],
+    ///     vec![Expr::int(3), Expr::int(4)],
+    /// ]).unwrap();
+    /// let inv = m.inverse().unwrap();
+    /// assert_eq!(inv.get(0, 0), Some(&Expr::int(-2)));
+    /// ```
     pub fn inverse(&self) -> Result<Matrix, Error> {
         self.require_square()?;
         let n = self.rows;

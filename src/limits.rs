@@ -42,6 +42,15 @@ pub enum Limit {
 /// `sum_{k=0}^{order} e^(k)(point) / k! * (var - point)^k`, simplified. Requires that
 /// the derivatives can be evaluated at `point` (the result may contain `undefined`
 /// forms if they cannot).
+/// # Example
+/// ```
+/// use tpt_symbolic::limits::taylor;
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::simplify::simplify;
+/// use tpt_symbolic::Expr;
+/// let t = taylor(&parse("exp(x)").unwrap(), "x", &Expr::zero(), 2).unwrap();
+/// assert_eq!(t, simplify(&parse("1 + x + x^2/2").unwrap()));
+/// ```
 pub fn taylor(e: &Expr, var: &str, point: &Expr, order: usize) -> Result<Expr, Error> {
     if order > MAX_TAYLOR_ORDER {
         return Err(Error::Unsupported("taylor order is too large"));
@@ -70,6 +79,13 @@ pub fn taylor(e: &Expr, var: &str, point: &Expr, order: usize) -> Result<Expr, E
     Ok(simplify(&expand(&Expr::sum(terms))))
 }
 
+/// # Example
+/// ```
+/// use tpt_symbolic::limits::{limit, Limit};
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::Expr;
+/// assert_eq!(limit(&parse("sin(x)/x").unwrap(), "x", &Expr::zero()), Limit::Finite(Expr::one()));
+/// ```
 /// The limit of `e` as `var` tends to `point`.
 pub fn limit(e: &Expr, var: &str, point: &Expr) -> Limit {
     finite_limit(&simplify(e), var, point, 0)
@@ -78,6 +94,14 @@ pub fn limit(e: &Expr, var: &str, point: &Expr) -> Limit {
 }
 
 /// The limit of `e` as `var` tends to `+∞` (`positive = true`) or `-∞`.
+/// # Example
+/// ```
+/// use tpt_symbolic::limits::{limit, limit_at_infinity, Limit};
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::Expr;
+/// assert_eq!(limit(&parse("sin(x)/x").unwrap(), "x", &Expr::zero()), Limit::Finite(Expr::one()));
+/// assert_eq!(limit_at_infinity(&parse("x^2").unwrap(), "x", true), Limit::PositiveInfinity);
+/// ```
 pub fn limit_at_infinity(e: &Expr, var: &str, positive: bool) -> Limit {
     let f = simplify(e);
     // A polynomial is a quotient over one. Otherwise the terms need one shared denominator.

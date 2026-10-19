@@ -200,6 +200,15 @@ pub struct Step {
 /// Only rules from [`RULES`] are recorded. Canonical construction (flattening,
 /// constant folding, like-term collection) happens in the smart constructors and is not
 /// listed, so the steps explain the rule-based part of the result.
+/// # Example
+/// ```
+/// use tpt_symbolic::parse::parse;
+/// use tpt_symbolic::simplify::simplify_trace;
+/// use tpt_symbolic::Expr;
+/// let (out, steps) = simplify_trace(&parse("sin(x)^2 + cos(x)^2").unwrap());
+/// assert_eq!(out, Expr::one());
+/// assert_eq!(steps[0].rule, "pythagorean-identity");
+/// ```
 pub fn simplify_trace(e: &Expr) -> (Expr, Vec<Step>) {
     let (out, _, steps) = run_passes(e, MAX_PASSES, true);
     (out, steps)
