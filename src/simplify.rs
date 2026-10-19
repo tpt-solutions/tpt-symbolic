@@ -32,6 +32,7 @@ pub const MAX_EXPAND_TERMS: usize = 4096;
 
 /// Which family a rule belongs to. Used for documentation and filtering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Category {
     /// Folding of exact constants and trivial identities.
     Constant,

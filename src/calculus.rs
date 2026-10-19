@@ -22,6 +22,7 @@ const MAX_CANDIDATES: usize = 16;
 
 /// Result of [`integrate`].
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Integral {
     /// A verified antiderivative, with the constant of integration omitted.
     Exact(Expr),

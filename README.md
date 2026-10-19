@@ -31,7 +31,7 @@ if let SolveResult::Exact(roots) = solve(&circle, "y").unwrap() {
 // Integrate with verification. Unsupported forms return Unevaluated.
 match integrate(&parse("x*cos(x^2)").unwrap(), "x") {
     Integral::Exact(f) => assert_eq!(f, parse("1/2*sin(x^2)").unwrap()),
-    Integral::Unevaluated(_) => unreachable!(),
+    _ => unreachable!("the README example integral is supported"),
 }
 ```
 

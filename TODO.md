@@ -75,7 +75,7 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [ ] (deferred) tpt-chemistry integration: balance `C3H8 + O2 → CO2 + H2O` as integer nullspace — the nullspace core is done and tested; wiring into tpt-chemistry is blocked on that repo
 - [ ] (deferred) tpt-concord integration: boolean satisfiability/contradiction check API
 - [ ] (deferred) tpt-math hand-off: AST export for numeric compilation
-- [ ] Docs, examples, API review — README and pipeline doctest done; API review pending
+- [x] Docs, examples, API review — README and pipeline doctest done; API review done (growable enums marked `#[non_exhaustive]`)
 - [ ] Publish v1.0.0 — excluded by you (not published)
 
 ## Cross-cutting quality

@@ -41,6 +41,7 @@ pub struct SymbolicRoot {
 
 /// Outcome of solving an equation.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SolveResult {
     /// Every solution, in exact form, sorted and without duplicates.
     Exact(Vec<Expr>),

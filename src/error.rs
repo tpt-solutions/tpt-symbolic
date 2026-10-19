@@ -4,6 +4,7 @@ use core::fmt;
 
 /// Errors produced by `tpt-symbolic`.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Error {
     /// The input text could not be parsed. `pos` is a byte offset into the source.
     Parse {
