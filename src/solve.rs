@@ -18,6 +18,7 @@
 //! and are not checked.
 
 use crate::error::Error;
+use crate::bigint::BigInt;
 use crate::expr::Expr;
 use crate::mathr::Number;
 use crate::simplify::simplify;
@@ -145,7 +146,7 @@ fn constant_coefficients(coeffs: &[Expr]) -> Option<Vec<Number>> {
 /// Returns `None` when a remainder of degree 3 or more has no rational root
 /// that the search can find.
 fn rational_roots(low: &[Number]) -> Option<Vec<Expr>> {
-    let mut poly: Vec<Number> = low.iter().rev().copied().collect(); // highest degree first
+    let mut poly: Vec<Number> = low.iter().rev().cloned().collect(); // highest degree first
     let mut roots = Vec::new();
     loop {
         // A zero constant term means a root at zero.
@@ -157,13 +158,13 @@ fn rational_roots(low: &[Number]) -> Option<Vec<Expr>> {
             break;
         }
         let r = find_rational_root(&poly)?;
-        poly = divide_by_linear(&poly, r)?;
+        poly = divide_by_linear(&poly, &r)?;
         roots.push(Expr::Const(r));
     }
     match poly.as_slice() {
         [c] if !c.is_zero() => {}
-        [a1, a0] => roots.push(Expr::Const(a0.checked_div(*a1)?.checked_neg()?)),
-        [a, b, c] => match quadratic(&Expr::Const(*a), &Expr::Const(*b), &Expr::Const(*c)) {
+        [a1, a0] => roots.push(Expr::Const(a0.checked_div(a1)?.checked_neg()?)),
+        [a, b, c] => match quadratic(&Expr::Const(a.clone()), &Expr::Const(b.clone()), &Expr::Const(c.clone())) {
             SolveResult::Exact(v) => roots.extend(v),
             SolveResult::NoSolution => {}
             _ => return None,
@@ -176,15 +177,18 @@ fn rational_roots(low: &[Number]) -> Option<Vec<Expr>> {
 /// A rational root of `poly` (highest degree first, non-zero constant term), if one is found.
 fn find_rational_root(poly: &[Number]) -> Option<Number> {
     let ints = integer_scale(poly)?;
-    let constant = ints.last()?.unsigned_abs();
-    let leading = ints.first()?.unsigned_abs();
+    let constant = ints.last()?.abs().to_u128()?;
+    let leading = ints.first()?.abs().to_u128()?;
     for &p in &divisors(constant)? {
         for &q in &divisors(leading)? {
             for sign in [1i128, -1] {
-                let Some(r) = Number::new(sign * p as i128, q as i128) else {
+                let Some(r) = Number::from_parts(
+                    BigInt::from_i128(sign * p as i128),
+                    BigInt::from_i128(q as i128),
+                ) else {
                     continue;
                 };
-                if eval_is_zero(poly, r) == Some(true) {
+                if eval_is_zero(poly, &r) == Some(true) {
                     return Some(r);
                 }
             }
@@ -194,14 +198,18 @@ fn find_rational_root(poly: &[Number]) -> Option<Number> {
 }
 
 /// Scales rational coefficients by the lcm of their denominators.
-fn integer_scale(poly: &[Number]) -> Option<Vec<i128>> {
-    let mut lcm: i128 = 1;
+fn integer_scale(poly: &[Number]) -> Option<Vec<BigInt>> {
+    let mut lcm = BigInt::one();
     for c in poly {
         let d = c.denom();
-        lcm = (lcm / gcd(lcm, d)).checked_mul(d)?;
+        let (q, _) = lcm.divrem(&lcm.gcd(d))?;
+        lcm = q.mul(d);
     }
     poly.iter()
-        .map(|c| c.numer().checked_mul(lcm / c.denom()))
+        .map(|c| {
+            let (factor, _) = lcm.divrem(c.denom())?;
+            Some(c.numer().mul(&factor))
+        })
         .collect()
 }
 
@@ -227,9 +235,9 @@ fn divisors(n: u128) -> Option<Vec<u128>> {
 }
 
 /// Horner evaluation: whether `poly` (highest degree first) vanishes at `r`.
-fn eval_is_zero(poly: &[Number], r: Number) -> Option<bool> {
-    let mut acc = Number::ZERO;
-    for &c in poly {
+fn eval_is_zero(poly: &[Number], r: &Number) -> Option<bool> {
+    let mut acc = Number::zero();
+    for c in poly {
         acc = acc.checked_mul(r)?.checked_add(c)?;
     }
     Some(acc.is_zero())
@@ -237,20 +245,20 @@ fn eval_is_zero(poly: &[Number], r: Number) -> Option<bool> {
 
 /// Quotient of `poly` (highest degree first) by `x - r`. The remainder is dropped,
 /// so `r` must be a root.
-fn divide_by_linear(poly: &[Number], r: Number) -> Option<Vec<Number>> {
+fn divide_by_linear(poly: &[Number], r: &Number) -> Option<Vec<Number>> {
     let mut out = Vec::with_capacity(poly.len() - 1);
-    let mut acc = Number::ZERO;
-    for (i, &c) in poly.iter().enumerate() {
+    let mut acc = Number::zero();
+    for (i, c) in poly.iter().enumerate() {
         acc = acc.checked_mul(r)?.checked_add(c)?;
         if i + 1 < poly.len() {
-            out.push(acc);
+            out.push(acc.clone());
         }
     }
     Some(out)
 }
 
 fn half() -> Number {
-    Number::new(1, 2).unwrap_or(Number::ONE)
+    Number::new(1, 2).unwrap_or(Number::one())
 }
 
 /// Coefficients of `e` viewed as a polynomial in `var`, lowest degree first.
@@ -279,12 +287,13 @@ fn poly_coeffs(e: &Expr, var: &str) -> Option<Vec<Expr>> {
         }
         Expr::Pow(b, x) => {
             let n = x.as_number()?;
-            if !n.is_integer() || n.is_negative() || n.numer() > MAX_POLY_DEGREE as i128 {
+            let k = n.as_i128()?;
+            if k < 0 || k > MAX_POLY_DEGREE as i128 {
                 return None;
             }
             let base = poly_coeffs(b, var)?;
             let mut acc = vec![Expr::one()];
-            for _ in 0..n.numer() {
+            for _ in 0..k {
                 acc = mul_polys(&acc, &base)?;
             }
             Some(acc)
@@ -335,17 +344,17 @@ fn rref(m: &mut [Vec<Number>], ncols: usize) -> Result<Vec<usize>, Error> {
         m.swap(r, p);
         let inv = m[r][c].checked_recip().ok_or(Error::DivisionByZero)?;
         for x in m[r][c..].iter_mut() {
-            *x = x.checked_mul(inv).ok_or(Error::Overflow)?;
+            *x = x.checked_mul(&inv).ok_or(Error::Overflow)?;
         }
         let pivot_row: Vec<Number> = m[r].clone();
         for (i, row) in m.iter_mut().enumerate() {
             if i == r || row[c].is_zero() {
                 continue;
             }
-            let factor = row[c];
+            let factor = row[c].clone();
             for k in c..row.len() {
-                let t = pivot_row[k].checked_mul(factor).ok_or(Error::Overflow)?;
-                row[k] = row[k].checked_sub(t).ok_or(Error::Overflow)?;
+                let t = pivot_row[k].checked_mul(&factor).ok_or(Error::Overflow)?;
+                row[k] = row[k].checked_sub(&t).ok_or(Error::Overflow)?;
             }
         }
         pivots.push(c);
@@ -372,7 +381,7 @@ pub fn solve_linear_system(a: &[Vec<Number>], b: &[Number]) -> Result<SolveResul
         .zip(b)
         .map(|(row, rhs)| {
             let mut r = row.clone();
-            r.push(*rhs);
+            r.push(rhs.clone());
             r
         })
         .collect();
@@ -386,7 +395,7 @@ pub fn solve_linear_system(a: &[Vec<Number>], b: &[Number]) -> Result<SolveResul
     let solution = pivots
         .iter()
         .enumerate()
-        .map(|(i, _)| Expr::Const(m[i][n]))
+        .map(|(i, _)| Expr::Const(m[i][n].clone()))
         .collect();
     Ok(SolveResult::Exact(solution))
 }
@@ -401,8 +410,8 @@ pub fn nullspace(a: &[Vec<Number>]) -> Result<Vec<Vec<Number>>, Error> {
     let pivots = rref(&mut m, n)?;
     let mut basis = Vec::new();
     for free in (0..n).filter(|c| !pivots.contains(c)) {
-        let mut v = vec![Number::ZERO; n];
-        v[free] = Number::ONE;
+        let mut v = vec![Number::zero(); n];
+        v[free] = Number::one();
         for (row, &pc) in pivots.iter().enumerate() {
             v[pc] = m[row][free].checked_neg().ok_or(Error::Overflow)?;
         }
@@ -414,41 +423,29 @@ pub fn nullspace(a: &[Vec<Number>]) -> Result<Vec<Vec<Number>>, Error> {
 /// Scales a rational vector to the smallest integer vector pointing the same way.
 /// The first non-zero entry is made positive. Used for stoichiometric coefficients.
 pub fn primitive_integer_vector(v: &[Number]) -> Result<Vec<i128>, Error> {
-    let mut lcm: i128 = 1;
+    let mut lcm = BigInt::one();
     for x in v {
-        let d = x.denom();
-        lcm = lcm / gcd(lcm, d) * d;
+        let (q, _) = lcm.divrem(&lcm.gcd(x.denom())).ok_or(Error::DivisionByZero)?;
+        lcm = q.mul(x.denom());
     }
-    let mut ints: Vec<i128> = Vec::with_capacity(v.len());
+    let mut ints: Vec<BigInt> = Vec::with_capacity(v.len());
     for x in v {
-        let scaled = x
-            .numer()
-            .checked_mul(lcm / x.denom())
-            .ok_or(Error::Overflow)?;
-        ints.push(scaled);
+        let (factor, _) = lcm.divrem(x.denom()).ok_or(Error::DivisionByZero)?;
+        ints.push(x.numer().mul(&factor));
     }
-    let g = ints.iter().fold(0, |acc, &x| gcd(acc, x));
-    if g > 0 {
+    let g = ints.iter().fold(BigInt::zero(), |acc, x| acc.gcd(x));
+    if !g.is_zero() {
         for x in ints.iter_mut() {
-            *x /= g;
+            let (q, _) = x.divrem(&g).ok_or(Error::DivisionByZero)?;
+            *x = q;
         }
     }
-    if ints.iter().find(|&&x| x != 0).is_some_and(|&x| x < 0) {
+    if ints.iter().find(|x| !x.is_zero()).is_some_and(|x| x.is_negative()) {
         for x in ints.iter_mut() {
-            *x = -*x;
+            *x = x.negate();
         }
     }
-    Ok(ints)
-}
-
-fn gcd(a: i128, b: i128) -> i128 {
-    let (mut a, mut b) = (a.unsigned_abs(), b.unsigned_abs());
-    while b != 0 {
-        let t = a % b;
-        a = b;
-        b = t;
-    }
-    a as i128
+    ints.iter().map(|x| x.to_i128().ok_or(Error::Overflow)).collect()
 }
 
 #[cfg(test)]

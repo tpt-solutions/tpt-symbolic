@@ -155,7 +155,7 @@ fn rule_reflexive_equation(e: &Expr) -> Option<Expr> {
 fn rule_parity(e: &Expr) -> Option<Expr> {
     let Expr::Func(f, a) = e else { return None };
     let Expr::Mul(v) = &**a else { return None };
-    if v.first()?.as_number()? != Number::NEG_ONE {
+    if v.first()?.as_number()? != Number::neg_one() {
         return None;
     }
     let x = Expr::product(v[1..].to_vec());
@@ -190,12 +190,12 @@ fn identity_pair(p: &(Number, Expr), q: &(Number, Expr)) -> Option<Expr> {
     let (c2, b2) = q;
     if let (Some(a), Some(b)) = (square_arg(b1, SymbolicFunc::Sin), square_arg(b2, SymbolicFunc::Cos)) {
         if a == b && c1 == c2 {
-            return Some(Expr::Const(*c1));
+            return Some(Expr::Const(c1.clone()));
         }
     }
     if let (Some(a), Some(b)) = (square_arg(b1, SymbolicFunc::Cosh), square_arg(b2, SymbolicFunc::Sinh)) {
-        if a == b && c2.checked_neg() == Some(*c1) {
-            return Some(Expr::Const(*c1));
+        if a == b && c2.checked_neg().as_ref() == Some(c1) {
+            return Some(Expr::Const(c1.clone()));
         }
     }
     None
@@ -228,7 +228,7 @@ fn rule_pythagorean(e: &Expr) -> Option<Expr> {
 fn rule_even_power_of_abs(e: &Expr) -> Option<Expr> {
     let Expr::Pow(base, exp) = e else { return None };
     let n = exp.as_number()?;
-    if !n.is_integer() || n.numer() % 2 != 0 {
+    if !n.is_integer() || n.as_i128()? % 2 != 0 {
         return None;
     }
     match &**base {
@@ -247,7 +247,7 @@ fn rule_tan_definition(e: &Expr) -> Option<Expr> {
                 continue;
             }
             let Expr::Pow(base, exp) = g else { continue };
-            let is_inv_cos = exp.as_number() == Some(Number::NEG_ONE)
+            let is_inv_cos = exp.as_number() == Some(Number::neg_one())
                 && matches!(&**base, Expr::Func(SymbolicFunc::Cos, b) if b == a);
             if is_inv_cos {
                 let rest: Vec<Expr> = v
@@ -379,8 +379,8 @@ pub fn expand(e: &Expr) -> Expr {
         Expr::Pow(b, x) => {
             let base = expand(b);
             if let (Expr::Add(_), Some(n)) = (&base, x.as_number()) {
-                if n.is_integer() && (2..=8).contains(&n.numer()) {
-                    let copies: Vec<Expr> = (0..n.numer()).map(|_| base.clone()).collect();
+                if n.is_integer() && n.as_i128().is_some_and(|v| (2..=8).contains(&v)) {
+                    let copies: Vec<Expr> = (0..n.as_i128().unwrap_or(0)).map(|_| base.clone()).collect();
                     return expand_product(e, &copies);
                 }
             }

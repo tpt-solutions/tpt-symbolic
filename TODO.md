@@ -17,7 +17,7 @@ Source of truth: `spec.txt`. Tick boxes as you go.
 - [x] Enforce: zero C-FFI, zero floats in core AST (CI grep/clippy lint for `f32`/`f64`)
 
 ## Phase 0b — Dependency stubs
-- [x] `mathr` shim: `Number` (BigInt / Rational / Complex), arithmetic, `Ord`, `Hash`, `Display`
+- [x] `mathr` shim: `Number` (arbitrary-precision rationals over BigInt; Complex not yet), arithmetic, `Ord`, `Hash`, `Display`
 - [x] Define the trait surface we need from real tpt-mathr so the swap is mechanical (`mathr::ExactNumber`, implemented by `Number`)
 - [x] `uir` shim: serialize/deserialize trait for `Expr`
 - [x] `testkit` shim: property-test + golden-file helpers (or temporary use of a public crate in dev-deps only)

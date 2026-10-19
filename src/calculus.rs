@@ -31,7 +31,7 @@ pub enum Integral {
 
 fn rat(p: i128, q: i128) -> Expr {
     // Callers pass a non-zero denominator, so the fallback is never used.
-    Expr::Const(Number::new(p, q).unwrap_or(Number::ONE))
+    Expr::Const(Number::new(p, q).unwrap_or(Number::one()))
 }
 
 /// Derivative of `e` with respect to `var`, simplified.
@@ -191,11 +191,11 @@ fn structural(e: &Expr, var: &str, depth: usize) -> Option<Expr> {
 fn power_antiderivative(b: &Expr, x: &Expr, var: &str) -> Option<Expr> {
     let n = x.as_number()?;
     let k = linear_slope(b, var)?;
-    let inner = if n == Number::NEG_ONE {
+    let inner = if n == Number::neg_one() {
         Expr::func(SymbolicFunc::Log, Expr::func(SymbolicFunc::Abs, b.clone()))
     } else {
-        let np1 = n.checked_add(Number::ONE)?;
-        let denom = np1.checked_mul(k)?;
+        let np1 = n.checked_add(&Number::one())?;
+        let denom = np1.checked_mul(&k)?;
         return Some(Expr::product(vec![
             Expr::power(b.clone(), Expr::Const(np1)),
             Expr::Const(denom.checked_recip()?),

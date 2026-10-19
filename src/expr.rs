@@ -5,6 +5,7 @@
 //! exact constants, collect like terms and factors, and sort operands. Two
 //! expressions that are equal by these rules therefore compare equal with `==`.
 
+use crate::bigint::BigInt;
 use crate::mathr::Number;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -129,18 +130,18 @@ impl Expr {
 
     /// The exact value `0`.
     pub fn zero() -> Expr {
-        Expr::Const(Number::ZERO)
+        Expr::Const(Number::zero())
     }
 
     /// The exact value `1`.
     pub fn one() -> Expr {
-        Expr::Const(Number::ONE)
+        Expr::Const(Number::one())
     }
 
     /// The exact value of this node, if it is a constant.
     pub fn as_number(&self) -> Option<Number> {
         match self {
-            Expr::Const(n) => Some(*n),
+            Expr::Const(n) => Some(n.clone()),
             _ => None,
         }
     }
@@ -163,7 +164,7 @@ impl Expr {
     /// Flattens nested sums, folds constants, combines like terms (`x + x`
     /// becomes `2*x`), drops zero terms, and sorts the result.
     pub fn sum(terms: Vec<Expr>) -> Expr {
-        let mut constant = Number::ZERO;
+        let mut constant = Number::zero();
         let mut flat: Vec<Expr> = Vec::new();
         for t in terms {
             match t {
@@ -182,9 +183,9 @@ impl Expr {
         for t in flat {
             let (coef, base) = t.split_coeff();
             match groups.iter().position(|(b, _)| *b == base) {
-                Some(i) => match groups[i].1.checked_add(coef) {
+                Some(i) => match groups[i].1.checked_add(&coef) {
                     Some(sum) => groups[i].1 = sum,
-                    // Coefficient overflow: keep the term unmerged rather than round.
+                    // Unreachable with arbitrary precision; kept to honour the Option contract.
                     None => out.push(t),
                 },
                 None => groups.push((base, coef)),
@@ -225,7 +226,7 @@ impl Expr {
             }
         }
 
-        let mut coef = Number::ONE;
+        let mut coef = Number::one();
         let mut rest: Vec<Expr> = Vec::new();
         for f in flat {
             absorb_factor(f, &mut coef, &mut rest);
@@ -277,7 +278,7 @@ impl Expr {
                         let mut fs = out.clone();
                         fs.push(t);
                         if !coef.is_one() {
-                            fs.push(Expr::Const(coef));
+                            fs.push(Expr::Const(coef.clone()));
                         }
                         expanded.push(Expr::product(fs));
                     }
@@ -316,7 +317,7 @@ impl Expr {
                 return base;
             }
             if n.is_integer() {
-                if let Ok(k) = i64::try_from(n.numer()) {
+                if let Some(k) = n.as_i128().and_then(|v| i64::try_from(v).ok()) {
                     match &base {
                         Expr::Const(b) => {
                             if let Some(p) = b.checked_pow(k) {
@@ -335,9 +336,9 @@ impl Expr {
                     }
                 }
             }
-            if n == Number::new(1, 2).unwrap_or(Number::ONE) {
+            if n == Number::new(1, 2).unwrap_or(Number::one()) {
                 if let Expr::Const(b) = &base {
-                    if let Some(root) = sqrt_const(*b) {
+                    if let Some(root) = sqrt_const(b.clone()) {
                         return root;
                     }
                 }
@@ -348,7 +349,7 @@ impl Expr {
 
     /// Canonical negation, expressed as `-1 * e`.
     pub fn negate(e: Expr) -> Expr {
-        Expr::product(vec![Expr::Const(Number::NEG_ONE), e])
+        Expr::product(vec![Expr::Const(Number::neg_one()), e])
     }
 
     /// Canonical difference `a - b`.
@@ -422,7 +423,7 @@ impl Expr {
 
     /// Splits a term into its numeric coefficient and the remaining factor.
     /// `2*x*y` gives `(2, x*y)` and `x` gives `(1, x)`. A bare constant
-    /// `c` gives `(1, c)`, so that overflowed constants still group correctly.
+    /// `c` gives `(1, c)`, so that a stray constant still groups correctly.
     pub(crate) fn split_coeff(&self) -> (Number, Expr) {
         match self {
             Expr::Mul(v) if v.len() >= 2 => {
@@ -433,12 +434,12 @@ impl Expr {
                     } else {
                         Expr::Mul(rest)
                     };
-                    return (*c, base);
+                    return (c.clone(), base);
                 }
-                (Number::ONE, self.clone())
+                (Number::one(), self.clone())
             }
-            Expr::Const(c) => (Number::ONE, Expr::Const(*c)),
-            _ => (Number::ONE, self.clone()),
+            Expr::Const(c) => (Number::one(), Expr::Const(c.clone())),
+            _ => (Number::one(), self.clone()),
         }
     }
 }
@@ -449,7 +450,7 @@ pub const MAX_PRODUCT_TERMS: usize = 4096;
 /// Adds a term to the running constant or to the list of non-constant terms.
 fn absorb_term(t: Expr, constant: &mut Number, flat: &mut Vec<Expr>) {
     if let Expr::Const(n) = &t {
-        match constant.checked_add(*n) {
+        match constant.checked_add(n) {
             Some(c) => *constant = c,
             None => flat.push(t),
         }
@@ -461,7 +462,7 @@ fn absorb_term(t: Expr, constant: &mut Number, flat: &mut Vec<Expr>) {
 /// Multiplies a factor into the running coefficient or the list of other factors.
 fn absorb_factor(f: Expr, coef: &mut Number, rest: &mut Vec<Expr>) {
     if let Expr::Const(n) = &f {
-        match coef.checked_mul(*n) {
+        match coef.checked_mul(n) {
             Some(c) => *coef = c,
             None => rest.push(f),
         }
@@ -482,22 +483,28 @@ fn sqrt_const(b: Number) -> Option<Expr> {
     if b.is_zero() {
         return Some(Expr::zero());
     }
-    let mut rest = b.numer().checked_mul(b.denom())?;
-    let mut k: i128 = 1;
+    // sqrt(p/q) = sqrt(p*q)/q, then pull out square factors up to 10^4.
+    let mut rest = b.numer().mul(b.denom());
+    let mut k = BigInt::one();
     let mut d: i128 = 2;
-    while d <= 10_000 && d * d <= rest {
-        while rest % (d * d) == 0 {
-            rest /= d * d;
-            k *= d;
+    while d <= 10_000 && BigInt::from_i128(d * d) <= rest {
+        let sq = BigInt::from_i128(d * d);
+        loop {
+            let (q, r) = rest.divrem(&sq)?;
+            if !r.is_zero() {
+                break;
+            }
+            rest = q;
+            k = k.mul(&BigInt::from_i128(d));
         }
         d += 1;
     }
-    let coef = Number::new(k, b.denom())?;
-    if rest == 1 {
+    let coef = Number::from_parts(k, b.denom().clone())?;
+    if rest.is_one() {
         return Some(Expr::Const(coef));
     }
     let root = Expr::Pow(
-        Box::new(Expr::int(rest)),
+        Box::new(Expr::Const(Number::from_parts(rest, BigInt::one())?)),
         Box::new(Expr::Const(Number::new(1, 2)?)),
     );
     if coef.is_one() {
@@ -575,9 +582,9 @@ fn has_negative_coefficient(t: &Expr) -> bool {
 fn negate_term(t: &Expr) -> Expr {
     match t {
         // i128::MIN has no positive counterpart; the parser never produces it.
-        Expr::Const(c) => Expr::Const(c.checked_neg().unwrap_or(*c)),
+        Expr::Const(c) => Expr::Const(c.checked_neg().unwrap_or(c.clone())),
         Expr::Mul(v) => {
-            let c = v[0].as_number().unwrap_or(Number::ONE);
+            let c = v[0].as_number().unwrap_or(Number::one());
             let flipped = c.checked_neg().unwrap_or(c);
             let rest = v[1..].to_vec();
             if flipped.is_one() {
@@ -759,6 +766,16 @@ mod tests {
     fn constant_powers_fold_exactly() {
         let e = Expr::power(Expr::rational(2, 3).unwrap(), Expr::int(-2));
         assert_eq!(e, Expr::rational(9, 4).unwrap());
+    }
+
+    #[test]
+    fn large_exact_constants_fold_instead_of_staying_symbolic() {
+        // sqrt(2^130) = 2^65: this used to stay unfolded once the value overflowed i128.
+        let big = Expr::power(Expr::int(2), Expr::int(130));
+        assert_eq!(
+            Expr::power(big, Expr::rational(1, 2).unwrap()),
+            Expr::power(Expr::int(2), Expr::int(65))
+        );
     }
 
     #[test]

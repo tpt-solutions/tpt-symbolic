@@ -78,7 +78,7 @@ pub fn random_expr(rng: &mut Rng, depth: u32) -> Expr {
         5 => {
             let p = rng.below(9) as i128 - 4;
             let q = 1 + rng.below(4) as i128;
-            Expr::Const(Number::new(p, q).unwrap_or(Number::ONE))
+            Expr::Const(Number::new(p, q).unwrap_or(Number::one()))
         }
         _ => {
             let c = rng.below(7) as i128 - 3;
