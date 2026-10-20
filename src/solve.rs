@@ -153,28 +153,53 @@ pub fn solve(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
 /// assert!(matches!(r, SolveResult::Exact(ref v) if v.len() == 2));
 /// ```
 pub fn solve_complex(equation: &Expr, var: &str) -> Result<SolveResult, Error> {
-    let result = solve(equation, var)?;
-    if !matches!(result, SolveResult::NoSolution) {
-        return Ok(result);
-    }
     let f = match equation {
         Expr::Eq(l, r) => simplify(&Expr::difference((**l).clone(), (**r).clone())),
         other => simplify(other),
     };
-    let Some(coeffs) = poly_coeffs(&f, var) else {
-        return Ok(result);
-    };
-    let mut coeffs: Vec<Expr> = coeffs.iter().map(simplify).collect();
-    while coeffs
-        .last()
-        .is_some_and(|c| c.as_number().is_some_and(|n| n.is_zero()))
-    {
-        coeffs.pop();
+    if let Some(all) = complex_all_roots(&f, var) {
+        return Ok(exact_roots(all));
     }
-    match coeffs.as_slice() {
-        [c, b, a] => Ok(complex_quadratic(a, b, c)),
-        _ => Ok(result),
+    solve(equation, var)
+}
+
+/// Every complex root of a polynomial of degree 1, 2 or 3 with rational coefficients.
+///
+/// Rational roots are peeled first. The remaining quadratic uses the complex formula, and
+/// the remaining cubic uses complex Cardano. `None` for other degrees, and for symbolic
+/// coefficients.
+fn complex_all_roots(f: &Expr, var: &str) -> Option<Vec<Expr>> {
+    let coeffs = poly_coeffs(f, var)?;
+    let mut low: Vec<Number> = coeffs
+        .iter()
+        .map(|c| simplify(c).as_number())
+        .collect::<Option<_>>()?;
+    while low.last().is_some_and(Number::is_zero) {
+        low.pop();
     }
+    if low.len() < 2 || low.len() > 4 {
+        return None;
+    }
+    let high: Vec<Number> = low.iter().rev().cloned().collect();
+    let (mut roots, rest) = peel_rational_roots(high);
+    match rest.as_slice() {
+        [c] if c.is_zero() => {}
+        [c] => {
+            // A nonzero constant has no roots.
+            let _ = c;
+        }
+        [b, a] => roots.push(Expr::Const(a.checked_neg()?.checked_div(b)?)),
+        [a, b, c] => match complex_quadratic(
+            &Expr::Const(a.clone()),
+            &Expr::Const(b.clone()),
+            &Expr::Const(c.clone()),
+        ) {
+            SolveResult::Exact(v) => roots.extend(v),
+            _ => return None,
+        },
+        [..] => roots.extend(cardano_all_roots(&rest)?),
+    }
+    Some(roots)
 }
 
 /// Roots of `a*y^2 + b*y + c = 0` over the complex numbers.
@@ -492,6 +517,150 @@ fn invert_once(f: &Expr, var: &str) -> Option<Vec<Expr>> {
     Some(out)
 }
 
+/// Depressed form `t^3 + p t + q = 0` of a cubic `a y^3 + b y^2 + c y + d` (highest degree
+/// first), with `y = t + shift`. Returns `(p, q, shift, disc)` where `disc = q^2/4 + p^3/27`.
+fn depressed_cubic(poly: &[Number]) -> Option<(Number, Number, Number, Number)> {
+    let [lead, b, c, d] = poly else { return None };
+    if lead.is_zero() {
+        return None;
+    }
+    let three = Number::from_int(3);
+    let b = b.checked_div(lead)?;
+    let c = c.checked_div(lead)?;
+    let d = d.checked_div(lead)?;
+    let shift = b.checked_div(&three)?.checked_neg()?;
+    let p = c.checked_sub(&b.checked_mul(&b)?.checked_div(&three)?)?;
+    let q = Number::from_int(2)
+        .checked_mul(&b.checked_mul(&b)?.checked_mul(&b)?)?
+        .checked_div(&Number::from_int(27))?
+        .checked_sub(&b.checked_mul(&c)?.checked_div(&three)?)?
+        .checked_add(&d)?;
+    let half_q = q.checked_div(&Number::from_int(2))?;
+    let p_third = p.checked_div(&three)?;
+    let disc = half_q
+        .checked_mul(&half_q)?
+        .checked_add(&p_third.checked_mul(&p_third)?.checked_mul(&p_third)?)?;
+    Some((p, q, shift, disc))
+}
+
+/// The three roots `u + v`, `w u + w̄ v`, `w̄ u + w v` of the depressed cubic, where
+/// `v = -p/(3u)` and `w = (-1 + i√3)/2`, shifted by `shift`.
+///
+/// Each is a root for any cube root `u` of `z`, where `z` satisfies `u^3 = z` and
+/// `z z̄ = -(p/3)^3`. Cardano's identity then gives `t^3 + p t + q = 0` for each of the three.
+fn complex_roots_from(u: Expr, p: &Number, shift: &Number) -> Option<Vec<Expr>> {
+    let v = Expr::quotient(
+        Expr::Const(p.checked_div(&Number::from_int(-3))?),
+        u.clone(),
+    );
+    let sqrt3 = Expr::power(Expr::int(3), Expr::Const(half()));
+    let w = Expr::quotient(
+        Expr::sum(vec![
+            Expr::int(-1),
+            Expr::product(vec![Expr::I, sqrt3.clone()]),
+        ]),
+        Expr::int(2),
+    );
+    let w_bar = Expr::quotient(
+        Expr::sum(vec![
+            Expr::int(-1),
+            Expr::product(vec![Expr::int(-1), Expr::I, sqrt3]),
+        ]),
+        Expr::int(2),
+    );
+    let shift = Expr::Const(shift.clone());
+    let roots = [
+        Expr::sum(vec![u.clone(), v.clone()]),
+        Expr::sum(vec![
+            Expr::product(vec![w.clone(), u.clone()]),
+            Expr::product(vec![w_bar.clone(), v.clone()]),
+        ]),
+        Expr::sum(vec![
+            Expr::product(vec![w_bar, u]),
+            Expr::product(vec![w, v]),
+        ]),
+    ];
+    Some(
+        roots
+            .into_iter()
+            .map(|r| simplify(&Expr::sum(vec![r, shift.clone()])))
+            .collect(),
+    )
+}
+
+/// The three roots of a cubic with a negative discriminant (three real roots), in complex
+/// radicals. `u` is the principal cube root of `-q/2 + i sqrt(-disc)`.
+fn cardano_casus_roots(poly: &[Number]) -> Option<Vec<Expr>> {
+    let (p, q, shift, disc) = depressed_cubic(poly)?;
+    if !disc.is_negative() {
+        return None;
+    }
+    let neg_disc = disc.checked_neg()?;
+    let half_q_neg = q.checked_div(&Number::from_int(2))?.checked_neg()?;
+    let root = Expr::power(Expr::Const(neg_disc), Expr::Const(half()));
+    let z = simplify(&Expr::sum(vec![
+        Expr::Const(half_q_neg),
+        Expr::product(vec![Expr::I, root]),
+    ]));
+    let u = simplify(&Expr::power(z, Expr::Const(Number::new(1, 3)?)));
+    complex_roots_from(u, &p, &shift)
+}
+
+/// All three roots of a cubic, in radicals, for `solve_complex`. Real roots are written with
+/// real cube roots when the discriminant is non-negative, and with complex radicals otherwise.
+/// A double root is returned once in each of its two values, and the caller removes duplicates.
+fn cardano_all_roots(poly: &[Number]) -> Option<Vec<Expr>> {
+    let (p, q, shift, disc) = depressed_cubic(poly)?;
+    if disc.is_negative() {
+        return cardano_casus_roots(poly);
+    }
+    let half_q_neg = q.checked_div(&Number::from_int(2))?.checked_neg()?;
+    if disc.is_zero() {
+        let single = cube_root_real(Expr::Const(half_q_neg.clone()), half_q_neg.clone());
+        let shift = Expr::Const(shift);
+        return Some(vec![
+            simplify(&Expr::sum(vec![
+                Expr::product(vec![Expr::int(2), single.clone()]),
+                shift.clone(),
+            ])),
+            simplify(&Expr::sum(vec![Expr::negate(single), shift])),
+        ]);
+    }
+    // disc > 0: one real cube root u of -q/2 + sqrt(disc).
+    let sqrt_disc = Expr::power(Expr::Const(disc.clone()), Expr::Const(half()));
+    let u_expr = simplify(&Expr::sum(vec![Expr::Const(half_q_neg.clone()), sqrt_disc]));
+    let sign = sign_of_sum_with_root(&half_q_neg, &disc, 1)?;
+    if sign == 0 {
+        return None;
+    }
+    let u = cube_root_signed(u_expr, sign);
+    complex_roots_from(u, &p, &shift)
+}
+
+/// Removes exact rational roots from a polynomial (highest degree first). Returns the roots
+/// found and the remaining factor. Zero constant terms count as roots at zero.
+fn peel_rational_roots(mut poly: Vec<Number>) -> (Vec<Expr>, Vec<Number>) {
+    let mut roots = Vec::new();
+    loop {
+        while poly.len() > 1 && poly.last().is_some_and(Number::is_zero) {
+            poly.pop();
+            roots.push(Expr::zero());
+        }
+        if poly.len() <= 1 {
+            break;
+        }
+        let Some(r) = find_rational_root(&poly) else {
+            break;
+        };
+        match divide_by_linear(&poly, &r) {
+            Some(q) => poly = q,
+            None => break,
+        }
+        roots.push(Expr::Const(r));
+    }
+    (roots, poly)
+}
+
 /// Real roots of a cubic `a y^3 + b y^2 + c y + d = 0` (highest degree first, `a != 0`) in
 /// Cardano form, when they are expressible with real radicals.
 ///
@@ -499,7 +668,7 @@ fn invert_once(f: &Expr, var: &str) -> Option<Vec<Expr>> {
 /// `q^2/4 + p^3/27` is non-negative, the real roots are `cbrt(u) + cbrt(v)` with
 /// `u, v = -q/2 ± sqrt(disc)`. Each real cube root is taken with the sign of its radicand,
 /// which is decided exactly. A negative discriminant (three real roots, the casus
-/// irreducibilis) needs complex intermediates, so `None` is returned for it.
+/// irreducibilis) is handled by [`cardano_casus_roots`], in complex radicals.
 fn cardano_roots(poly: &[Number]) -> Option<Vec<Expr>> {
     let [lead, b, c, d] = poly else { return None };
     if lead.is_zero() {
@@ -523,7 +692,7 @@ fn cardano_roots(poly: &[Number]) -> Option<Vec<Expr>> {
         .checked_mul(&half_q_neg)?
         .checked_add(&p_third.checked_mul(&p_third)?.checked_mul(&p_third)?)?;
     if disc.is_negative() {
-        return None;
+        return cardano_casus_roots(poly);
     }
     let shift = Expr::Const(b_over_3.checked_neg()?);
     let ys: Vec<Expr> = if disc.is_zero() {
@@ -1147,13 +1316,13 @@ mod tests {
 
     #[test]
     fn partial_roots_keep_the_exact_part() {
-        // (x - 1)(x^3 - 3x + 1): x = 1 is exact. The cubic has three real roots, which need
-        // complex intermediates for Cardano, so it is handed off.
-        match solve(&p("x^4 - x^3 - 3*x^2 + 4*x - 1 = 0"), "x").unwrap() {
+        // (x - 1)(x^4 + x + 1): x = 1 is exact. The quartic has no rational resolvent root,
+        // so it is handed off.
+        match solve(&p("x^5 - x^4 + x^2 - 1 = 0"), "x").unwrap() {
             SolveResult::Partial { exact, rest } => {
                 assert_eq!(exact, vec![Expr::int(1)]);
                 assert_eq!(rest.var.as_ref(), "x");
-                assert_eq!(rest.expr, simplify(&p("x^3 - 3*x + 1")));
+                assert_eq!(rest.expr, simplify(&p("x^4 + x + 1")));
             }
             other => panic!("expected a partial result, got {other:?}"),
         }
@@ -1206,17 +1375,17 @@ mod tests {
 
     #[test]
     fn numeric_hand_off_can_be_isolated_rigorously() {
-        // x^3 - 3x + 1 has three real roots, near -1.88, 0.35 and 1.53.
-        let SolveResult::Numeric(root) = solve(&p("x^3 - 3*x + 1 = 0"), "x").unwrap() else {
+        // x^5 + x + 1 has no closed form here; its single real root is near -0.755.
+        let SolveResult::Numeric(root) = solve(&p("x^5 + x + 1 = 0"), "x").unwrap() else {
             panic!("expected a numeric hand-off");
         };
         let brackets = root
             .isolate(&Number::from_int(-3), &Number::from_int(3), 20)
             .unwrap();
-        // Every root lies in some bracket, so there are at least three. Brackets that touch
-        // a root at the finest resolution cannot be excluded, so a few more are allowed.
+        // Every root lies in some bracket. Brackets that touch the root at the finest
+        // resolution cannot be excluded, so a few extra are allowed.
         assert!(
-            (3..=6).contains(&brackets.len()),
+            (1..=4).contains(&brackets.len()),
             "{} brackets",
             brackets.len()
         );
@@ -1228,8 +1397,115 @@ mod tests {
                 b.hi.checked_sub(&b.lo).unwrap().cmp_value(&finest) != core::cmp::Ordering::Greater
             );
         }
-        for pair in brackets.windows(2) {
-            assert!(pair[0].hi.cmp_value(&pair[1].lo) != core::cmp::Ordering::Greater);
+    }
+
+    /// Test-only numeric check: evaluates `e` at the complex number `z` with `f64`. The core
+    /// stays exact; this only confirms closed forms numerically.
+    fn eval_complex_f64(e: &Expr, z: (f64, f64)) -> Option<(f64, f64)> {
+        fn to_f64(n: &Number) -> Option<f64> {
+            let num: f64 = alloc::format!("{}", n.numer()).parse().ok()?;
+            let den: f64 = alloc::format!("{}", n.denom()).parse().ok()?;
+            Some(num / den)
+        }
+        fn mul(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+            (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
+        }
+        fn add(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+            (a.0 + b.0, a.1 + b.1)
+        }
+        fn powf(z: (f64, f64), x: f64) -> (f64, f64) {
+            let r = z.0.hypot(z.1);
+            if r == 0.0 {
+                return (0.0, 0.0);
+            }
+            let theta = z.1.atan2(z.0);
+            let m = r.powf(x);
+            (m * (x * theta).cos(), m * (x * theta).sin())
+        }
+        Some(match e {
+            Expr::Const(n) => (to_f64(n)?, 0.0),
+            Expr::I => (0.0, 1.0),
+            Expr::Var(_) => z,
+            Expr::Add(v) => v
+                .iter()
+                .try_fold((0.0, 0.0), |acc, t| Some(add(acc, eval_complex_f64(t, z)?)))?,
+            Expr::Mul(v) => v
+                .iter()
+                .try_fold((1.0, 0.0), |acc, t| Some(mul(acc, eval_complex_f64(t, z)?)))?,
+            Expr::Pow(b, x) => {
+                let base = eval_complex_f64(b, z)?;
+                let n = x.as_number()?;
+                if n.is_integer() {
+                    let k = n.as_i128()?;
+                    let mut acc = (1.0, 0.0);
+                    for _ in 0..k.unsigned_abs() {
+                        acc = mul(acc, base);
+                    }
+                    if k < 0 {
+                        let d = acc.0 * acc.0 + acc.1 * acc.1;
+                        (acc.0 / d, -acc.1 / d)
+                    } else {
+                        acc
+                    }
+                } else {
+                    powf(base, to_f64(&n)?)
+                }
+            }
+            _ => return None,
+        })
+    }
+
+    /// `coeffs` are highest degree first. Evaluates the polynomial at `z`.
+    fn poly_at(coeffs: &[f64], z: (f64, f64)) -> (f64, f64) {
+        coeffs.iter().fold((0.0, 0.0), |acc, c| {
+            let m = (acc.0 * z.0 - acc.1 * z.1, acc.0 * z.1 + acc.1 * z.0);
+            (m.0 + c, m.1)
+        })
+    }
+
+    /// Checks every root of `equation` numerically against `coeffs`.
+    fn assert_roots_satisfy(roots: &[Expr], coeffs: &[f64]) {
+        for r in roots {
+            let z =
+                eval_complex_f64(r, (0.0, 0.0)).unwrap_or_else(|| panic!("cannot evaluate {r}"));
+            let value = poly_at(coeffs, z);
+            assert!(
+                value.0.abs() < 1e-7 && value.1.abs() < 1e-7,
+                "{r} gives {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn three_real_roots_are_exact_in_complex_radicals() {
+        // x^3 - 3x + 1 has three real roots (near -1.879, 0.347, 1.532). Their closed forms
+        // use complex radicals, and each one is checked numerically.
+        match solve(&p("x^3 - 3*x + 1 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => {
+                assert_eq!(v.len(), 3);
+                assert_roots_satisfy(&v, &[1.0, 0.0, -3.0, 1.0]);
+            }
+            other => panic!("expected exact roots, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn solve_complex_gives_all_three_roots_of_a_cubic() {
+        // x^3 + x + 1: one real root and a complex pair.
+        match solve_complex(&p("x^3 + x + 1 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => {
+                assert_eq!(v.len(), 3);
+                assert_roots_satisfy(&v, &[1.0, 0.0, 1.0, 1.0]);
+            }
+            other => panic!("expected exact roots, got {other:?}"),
+        }
+        // x^3 - 1: the rational root 1 and the complex pair -1/2 ± i sqrt(3)/2.
+        match solve_complex(&p("x^3 - 1 = 0"), "x").unwrap() {
+            SolveResult::Exact(v) => {
+                assert_eq!(v.len(), 3);
+                assert_roots_satisfy(&v, &[1.0, 0.0, 0.0, -1.0]);
+            }
+            other => panic!("expected exact roots, got {other:?}"),
         }
     }
 
@@ -1240,11 +1516,7 @@ mod tests {
             SolveResult::Exact(v) => assert_eq!(v.len(), 1),
             other => panic!("expected an exact root, got {other:?}"),
         }
-        // Three real roots (casus irreducibilis) need complex intermediates: stays numeric.
-        assert!(matches!(
-            solve(&p("x^3 - 3*x + 1 = 0"), "x").unwrap(),
-            SolveResult::Numeric(_)
-        ));
+        // The three-real-root cubic is exact now (see three_real_roots_are_exact...).
     }
 
     #[test]

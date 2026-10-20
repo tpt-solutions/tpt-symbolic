@@ -50,6 +50,51 @@ pub fn modulus(e: &Expr) -> Option<Expr> {
     )))
 }
 
+/// Argument of `e`, in `(-π, π]`, for a numeric value. `None` when `e` is not numeric or
+/// is zero.
+///
+/// With `re` and `im` the parts of `e`: `atan(im/re)` when `re > 0`, `atan(im/re) ± π` when
+/// `re < 0` (with `+` for `im >= 0`), and `±π/2` when `re = 0`.
+pub fn arg(e: &Expr) -> Option<Expr> {
+    let (re, im) = split(e)?;
+    let re = re.as_number()?;
+    let im = im.as_number()?;
+    if re.is_zero() && im.is_zero() {
+        return None;
+    }
+    let pi = Expr::Pi;
+    if re.is_zero() {
+        let half_pi = Expr::product(vec![Expr::rational(1, 2)?, pi]);
+        return Some(if im.is_negative() {
+            Expr::negate(half_pi)
+        } else {
+            half_pi
+        });
+    }
+    let ratio = im.checked_div(&re)?;
+    let base = Expr::func(crate::expr::SymbolicFunc::Atan, Expr::Const(ratio));
+    if !re.is_negative() {
+        return Some(simplify(&base));
+    }
+    let shift = if im.is_negative() {
+        Expr::negate(pi)
+    } else {
+        pi
+    };
+    Some(simplify(&Expr::sum(vec![base, shift])))
+}
+
+/// Principal complex logarithm `ln|e| + i arg(e)`, for a numeric value.
+pub fn log(e: &Expr) -> Option<Expr> {
+    let modulus = modulus(e)?;
+    let theta = arg(e)?;
+    let real = Expr::func(crate::expr::SymbolicFunc::Log, modulus);
+    Some(simplify(&Expr::sum(vec![
+        real,
+        Expr::product(vec![Expr::I, theta]),
+    ])))
+}
+
 /// Unsimplified `(real, imaginary)` parts.
 fn split_raw(e: &Expr) -> Option<(Expr, Expr)> {
     if !contains_i(e) {
@@ -185,5 +230,45 @@ mod modulus_tests {
         assert_eq!(modulus(&parse("3 + 4*i").unwrap()), Some(Expr::int(5)));
         // |i| = 1.
         assert_eq!(modulus(&parse("i").unwrap()), Some(Expr::one()));
+    }
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+    use crate::parse::parse;
+
+    #[test]
+    fn arguments_of_axis_and_quadrant_values() {
+        assert_eq!(
+            arg(&parse("i").unwrap()),
+            Some(simplify(&parse("pi/2").unwrap()))
+        );
+        assert_eq!(
+            arg(&parse("-1").unwrap()),
+            Some(simplify(&parse("pi").unwrap()))
+        );
+        assert_eq!(
+            arg(&parse("-i").unwrap()),
+            Some(simplify(&parse("-pi/2").unwrap()))
+        );
+        assert_eq!(
+            arg(&parse("1 + i").unwrap()),
+            Some(simplify(&parse("pi/4").unwrap()))
+        );
+        assert_eq!(arg(&parse("0").unwrap()), None);
+    }
+
+    #[test]
+    fn logarithm_of_i_and_minus_one() {
+        // log(i) = i pi / 2 and log(-1) = i pi.
+        assert_eq!(
+            log(&parse("i").unwrap()),
+            Some(simplify(&parse("i*pi/2").unwrap()))
+        );
+        assert_eq!(
+            log(&parse("-1").unwrap()),
+            Some(simplify(&parse("i*pi").unwrap()))
+        );
     }
 }

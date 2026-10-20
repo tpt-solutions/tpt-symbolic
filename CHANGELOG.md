@@ -37,7 +37,8 @@ use semantic versioning once v1.0.0 is released.
 - `matrix::Matrix`: determinant, inverse, product, transpose, and a linear solve, exact for numeric entries and cofactor-based for symbolic ones.
 - `calculus::definite_integral`, conservative: only regular integrands are evaluated. `integrate` tries the expansion when the direct form fails.
 - `simplify::simplify_trace`: the rule applications that produced a result.
-- Complex modulus (`complex::modulus`).
+- Complex modulus, argument and principal logarithm for numeric values (`complex::modulus`, `arg`, `log`).
+- Cubics with three real roots are exact in complex radicals. `solve_complex` returns all three roots of a cubic. Atan at 0 and ±1 folds to multiples of pi.
 - Imaginary unit `i` (`Expr::I`), `solve_complex` (complex roots of quadratics), and `real_part`, `imag_part` and `conjugate`.
 - Rational integration by partial fractions, with `log|…|` and `atan` terms, checked at exact points.
 - `x^n * atan(x)` by parts, with the rational remainder checked at exact points.

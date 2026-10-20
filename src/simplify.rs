@@ -117,6 +117,12 @@ pub const RULES: &[Rule] = &[
         apply: rule_special_angle,
     },
     Rule {
+        name: "special-atan",
+        priority: 99,
+        category: Category::Trigonometric,
+        apply: rule_special_atan,
+    },
+    Rule {
         name: "inverse-log-exp",
         priority: 80,
         category: Category::Exponential,
@@ -463,6 +469,23 @@ fn rule_imaginary_unit(e: &Expr) -> Option<Expr> {
             Some(Expr::product(factors))
         }
         _ => None,
+    }
+}
+
+/// `atan` at 0 and at ±1: `0`, `±π/4`.
+fn rule_special_atan(e: &Expr) -> Option<Expr> {
+    let Expr::Func(SymbolicFunc::Atan, arg) = e else {
+        return None;
+    };
+    let c = arg.as_number()?;
+    if c.is_zero() {
+        Some(Expr::zero())
+    } else if c.is_one() {
+        Some(Expr::product(vec![Expr::rational(1, 4)?, Expr::Pi]))
+    } else if c == Number::neg_one() {
+        Some(Expr::product(vec![Expr::rational(-1, 4)?, Expr::Pi]))
+    } else {
+        None
     }
 }
 

@@ -100,9 +100,10 @@ digits, and then only the digits you ask for are produced.
 - **Solver scope.** Exact answers exist for degree 1 and 2 (including complex roots
   through `solve_complex`), for polynomials with rational roots, for `x^n = c`, for
   biquadratics, for cubics with one real root (Cardano), and for quartics whose resolvent
-  cubic has a positive rational root (Ferrari). Three real roots of a cubic need complex
-  intermediates and are reported as numeric. Other leftovers use `SymbolicRoot::isolate`
-  for rigorous brackets.
+  cubic has a positive rational root (Ferrari). A cubic with three real roots (the casus
+  irreducibilis) is exact in complex radicals, and `solve_complex` returns all three roots
+  of a cubic. Those closed forms are checked numerically in the tests, not symbolically.
+  Other leftovers use `SymbolicRoot::isolate` for rigorous brackets.
 - **Factoring.** Complete over the rationals for degree up to 4, and marked incomplete
   beyond that. Partial fractions need a completely factored denominator.
 - **Integration scope.** Power rule, linear arguments, basic trig and exponential forms,
