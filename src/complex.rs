@@ -37,6 +37,19 @@ pub fn conjugate(e: &Expr) -> Option<Expr> {
     )))
 }
 
+/// Modulus `|e| = sqrt(re^2 + im^2)` of `e`, with the square root taken as a power.
+pub fn modulus(e: &Expr) -> Option<Expr> {
+    let (re, im) = split(e)?;
+    let sum = Expr::sum(vec![
+        Expr::power(re, Expr::int(2)),
+        Expr::power(im, Expr::int(2)),
+    ]);
+    Some(simplify(&Expr::power(
+        sum,
+        Expr::Const(crate::mathr::Number::new(1, 2)?),
+    )))
+}
+
 /// Unsimplified `(real, imaginary)` parts.
 fn split_raw(e: &Expr) -> Option<(Expr, Expr)> {
     if !contains_i(e) {
@@ -158,5 +171,19 @@ mod tests {
     fn functions_of_complex_values_are_refused() {
         assert_eq!(real_part(&p("sin(i)")), None);
         assert_eq!(real_part(&p("(1+i)^(1/2)")), None);
+    }
+}
+
+#[cfg(test)]
+mod modulus_tests {
+    use super::*;
+    use crate::parse::parse;
+
+    #[test]
+    fn modulus_of_a_complex_number() {
+        // |3 + 4i| = 5.
+        assert_eq!(modulus(&parse("3 + 4*i").unwrap()), Some(Expr::int(5)));
+        // |i| = 1.
+        assert_eq!(modulus(&parse("i").unwrap()), Some(Expr::one()));
     }
 }
