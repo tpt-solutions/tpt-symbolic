@@ -7,7 +7,7 @@
 //! checked against the original rational function at sample points, and returned only if
 //! it agrees.
 //!
-//! [`decompose`] is the same computation with the terms returned as data, for callers
+//! `decompose` (crate-internal) is the same computation with the terms returned as data, for callers
 //! that integrate or differentiate them term by term.
 //!
 //! The denominator must factor completely (see [`crate::factor`]). Otherwise the

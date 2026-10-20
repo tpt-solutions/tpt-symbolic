@@ -181,7 +181,12 @@ pub fn integrate(e: &Expr, var: &str) -> Integral {
     let integrand = simplify(e);
     // Try the integrand as written, then its expansion, so that `(x^2+1)^2` integrates
     // term by term. Either form is accepted only when its derivative matches it.
-    for candidate in [integrand.clone(), simplify(&expand(&integrand))] {
+    for k in 0..2 {
+        let candidate = if k == 0 {
+            integrand.clone()
+        } else {
+            simplify(&expand(&integrand))
+        };
         if let Some(f) = antideriv(&candidate, var, 0) {
             let f = simplify(&f);
             if let Ok(d) = diff(&f, var) {
@@ -356,6 +361,11 @@ fn by_parts(p: &Expr, g: &Expr, var: &str, depth: usize) -> Option<Expr> {
 /// derivative is simpler than `u`. Gives `u V - ∫ u' V dx`, where `V` is an antiderivative
 /// of `g`. Covers `log(x) * x^2` (differentiate the log), which the `x^n` form cannot.
 fn by_parts_general(u: &Expr, g: &Expr, var: &str, depth: usize) -> Option<Expr> {
+    // Only worth trying when u is a log or atan: those are the factors whose derivative is
+    // simpler than u. Trying it for every product costs time without finding new results.
+    if !matches!(u, Expr::Func(SymbolicFunc::Log | SymbolicFunc::Atan, _)) {
+        return None;
+    }
     if depth >= MAX_SUB_DEPTH {
         return None;
     }

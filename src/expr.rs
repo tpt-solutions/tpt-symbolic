@@ -364,11 +364,18 @@ impl Expr {
                     }
                 }
             }
-            // c^(-1/2) = 1 / sqrt(c) when the square root folds.
+            // c^(-1/2) = 1 / sqrt(c), when the root folds to something other than c^(1/2).
+            // A root that is just c^(1/2) would invert back to c^(-1/2) and loop.
             if n == Number::new(-1, 2).unwrap_or(Number::one()) {
                 if let Expr::Const(b) = &base {
                     if let Some(root) = sqrt_const(b.clone()) {
-                        return Expr::power(root, Expr::int(-1));
+                        let unfolded = matches!(
+                            &root,
+                            Expr::Pow(p, _) if **p == Expr::Const(b.clone())
+                        );
+                        if !unfolded {
+                            return Expr::power(root, Expr::int(-1));
+                        }
                     }
                 }
             }

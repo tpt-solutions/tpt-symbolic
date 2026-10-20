@@ -40,6 +40,7 @@ pub enum Op {
 
 /// A compiled expression: the variable names, and the operations in evaluation order.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Program {
     /// Variable names. [`Op::Var`] indices refer to this list.
     pub vars: Vec<String>,

@@ -27,9 +27,13 @@ pub mod latex;
 pub mod limits;
 pub mod mathr;
 pub mod matrix;
+#[cfg(test)]
+mod numeric_check;
 mod ops;
 pub mod parse;
 pub mod program;
+#[cfg(test)]
+mod property_tests;
 pub mod simplify;
 pub mod solve;
 

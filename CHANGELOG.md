@@ -46,6 +46,8 @@ use semantic versioning once v1.0.0 is released.
 - Exact `sin` and `cos` at multiples of pi/12 (the `special-angle` rule).
 - Integration of `e^(ax)·sin(bx)` and `e^(ax)·cos(bx)` in closed form, and integration by parts with the logarithm differentiated (`x^2*log(x)`).
 - Doc examples for the new public functions.
+- Property tests (`src/property_tests.rs`): random cubics and quartics are solved and each exact root is checked against its equation; random rational functions are integrated and each antiderivative is checked against its integrand at sample points. A test-only evaluator (`src/numeric_check.rs`) does the numeric checks.
+- The growable public structs (`Factor`, `Factorization`, `Step`, `SymbolicRoot`, `Program`, `Interval`) are `#[non_exhaustive]`.
 - Radical solutions: Cardano for cubics with one real root, and Ferrari for quartics whose resolvent cubic has a positive rational root.
 - Equations of the form `exp(u) = c`, `log(u) = c`, `1/u = c`, and `u^n = c` are inverted, and the inner equation is solved exactly.
 - `assume::simplify_assuming`: `abs` and `log(abs)` rules for variables declared positive.
@@ -70,6 +72,7 @@ use semantic versioning once v1.0.0 is released.
 - `Expr` and `SymbolicFunc` are `#[non_exhaustive]`.
 
 ### Fixed
+- `c^(-1/2)` for a constant that is not a perfect square looped forever in the simplifier (found by the property tests). It now stays as a power.
 - `nullspace` returns an error for ragged input instead of panicking with an index out of bounds.
 - Perfect squares above the 10^4 trial-division bound stayed inside the root: `sqrt(10007^2)` did not fold to `10007`.
 - `sqrt(2)` is now a square root. It used to parse as `2*sqrt`, a product with a variable named `sqrt`.

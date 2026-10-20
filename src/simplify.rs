@@ -198,6 +198,7 @@ fn simplify_with_passes(e: &Expr, max_passes: usize) -> (Expr, bool) {
 
 /// One rule application: which rule fired, and the node before and after it.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Step {
     /// Name from the [`RULES`] table.
     pub rule: &'static str,

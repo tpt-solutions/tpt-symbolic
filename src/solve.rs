@@ -34,6 +34,7 @@ const MAX_POLY_DEGREE: usize = 8;
 /// An equation `expr(var) = 0` that has no closed form here. A numeric
 /// solver (Newton-Raphson in `tpt-math`) can take it from this point.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SymbolicRoot {
     /// Left-hand side after moving everything to one side.
     pub expr: Expr,
@@ -1399,62 +1400,6 @@ mod tests {
         }
     }
 
-    /// Test-only numeric check: evaluates `e` at the complex number `z` with `f64`. The core
-    /// stays exact; this only confirms closed forms numerically.
-    fn eval_complex_f64(e: &Expr, z: (f64, f64)) -> Option<(f64, f64)> {
-        fn to_f64(n: &Number) -> Option<f64> {
-            let num: f64 = alloc::format!("{}", n.numer()).parse().ok()?;
-            let den: f64 = alloc::format!("{}", n.denom()).parse().ok()?;
-            Some(num / den)
-        }
-        fn mul(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
-            (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
-        }
-        fn add(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
-            (a.0 + b.0, a.1 + b.1)
-        }
-        fn powf(z: (f64, f64), x: f64) -> (f64, f64) {
-            let r = z.0.hypot(z.1);
-            if r == 0.0 {
-                return (0.0, 0.0);
-            }
-            let theta = z.1.atan2(z.0);
-            let m = r.powf(x);
-            (m * (x * theta).cos(), m * (x * theta).sin())
-        }
-        Some(match e {
-            Expr::Const(n) => (to_f64(n)?, 0.0),
-            Expr::I => (0.0, 1.0),
-            Expr::Var(_) => z,
-            Expr::Add(v) => v
-                .iter()
-                .try_fold((0.0, 0.0), |acc, t| Some(add(acc, eval_complex_f64(t, z)?)))?,
-            Expr::Mul(v) => v
-                .iter()
-                .try_fold((1.0, 0.0), |acc, t| Some(mul(acc, eval_complex_f64(t, z)?)))?,
-            Expr::Pow(b, x) => {
-                let base = eval_complex_f64(b, z)?;
-                let n = x.as_number()?;
-                if n.is_integer() {
-                    let k = n.as_i128()?;
-                    let mut acc = (1.0, 0.0);
-                    for _ in 0..k.unsigned_abs() {
-                        acc = mul(acc, base);
-                    }
-                    if k < 0 {
-                        let d = acc.0 * acc.0 + acc.1 * acc.1;
-                        (acc.0 / d, -acc.1 / d)
-                    } else {
-                        acc
-                    }
-                } else {
-                    powf(base, to_f64(&n)?)
-                }
-            }
-            _ => return None,
-        })
-    }
-
     /// `coeffs` are highest degree first. Evaluates the polynomial at `z`.
     fn poly_at(coeffs: &[f64], z: (f64, f64)) -> (f64, f64) {
         coeffs.iter().fold((0.0, 0.0), |acc, c| {
@@ -1466,8 +1411,8 @@ mod tests {
     /// Checks every root of `equation` numerically against `coeffs`.
     fn assert_roots_satisfy(roots: &[Expr], coeffs: &[f64]) {
         for r in roots {
-            let z =
-                eval_complex_f64(r, (0.0, 0.0)).unwrap_or_else(|| panic!("cannot evaluate {r}"));
+            let z = crate::numeric_check::eval(r, "x", (0.0, 0.0))
+                .unwrap_or_else(|| panic!("cannot evaluate {r}"));
             let value = poly_at(coeffs, z);
             assert!(
                 value.0.abs() < 1e-7 && value.1.abs() < 1e-7,

@@ -19,6 +19,7 @@ pub const MAX_ISOLATED: usize = 4096;
 
 /// A closed interval `[lo, hi]` with exact rational endpoints, `lo <= hi`.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Interval {
     /// Left endpoint.
     pub lo: Number,

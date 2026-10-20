@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 
 /// One irreducible factor with its multiplicity.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Factor {
     /// The factor as an expression in the variable, monic.
     pub expr: Expr,
@@ -27,6 +28,7 @@ pub struct Factor {
 
 /// The factorisation `leading * prod(expr^multiplicity)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Factorization {
     /// The leading coefficient of the original polynomial.
     pub leading: Number,

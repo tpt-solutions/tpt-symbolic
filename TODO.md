@@ -172,3 +172,10 @@ has a test or was checked by hand.
 - [x] CONTRIBUTING.md, with a walkthrough for adding a simplification rule
 - [x] Open decisions resolved by the recommended option: solver result enum is done (`SolveResult`). Partial-root variant, `Parametric` split and `pi`/`e` constants are done as additions. The `Parametric` split and the `e` name change alter behaviour and are recorded in CHANGELOG (see the review decisions above). `serde` stays deferred, so no new dependency
 - [x] Sibling-crate URLs: `tpt-mathr`, `tpt-uir`, `tpt-testkit` found and recorded. The tpt-vertex, tpt-chemistry and tpt-concord integrations are dropped by the user (see above)
+
+## Next-step review (after the cubic and complex work)
+- [x] Property-based checks of the solver and the integrator (`src/property_tests.rs`), with a test-only numeric evaluator (`src/numeric_check.rs`). Found and fixed one real bug: a non-square constant to the power -1/2 looped in the simplifier.
+- [x] Benchmark re-run. Release timings on this machine vary by about 20% between runs. `integrate` on `x*cos(x^2)` was about 5x slower after the by-parts and rational routes were added, and is back to about 0.18 ms after making the expansion lazy and restricting the general by-parts form to log and atan.
+- [x] API review: every public enum is `#[non_exhaustive]`. The public structs that may grow are too. `RUSTDOCFLAGS="-D warnings" cargo doc` is clean.
+- [x] Playground: the wasm functions were run under Node through `initSync`, with the page's calls. The page's own DOM code has not been run in a browser.
+- [ ] Browser run of the playground page (needs a browser, which this environment does not have).
