@@ -178,4 +178,4 @@ has a test or was checked by hand.
 - [x] Benchmark re-run. Release timings on this machine vary by about 20% between runs. `integrate` on `x*cos(x^2)` was about 5x slower after the by-parts and rational routes were added, and is back to about 0.18 ms after making the expansion lazy and restricting the general by-parts form to log and atan.
 - [x] API review: every public enum is `#[non_exhaustive]`. The public structs that may grow are too. `RUSTDOCFLAGS="-D warnings" cargo doc` is clean.
 - [x] Playground: the wasm functions were run under Node through `initSync`, with the page's calls. The page's own DOM code has not been run in a browser.
-- [ ] Browser run of the playground page (needs a browser, which this environment does not have).
+- [x] Browser run of the playground page: headless Chrome loaded the page over HTTP, the form handlers ran, and all five panels rendered the expected output (`simplify`, `diff`, `integrate`, `solve`, `latex`).
