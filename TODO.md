@@ -179,3 +179,9 @@ has a test or was checked by hand.
 - [x] API review: every public enum is `#[non_exhaustive]`. The public structs that may grow are too. `RUSTDOCFLAGS="-D warnings" cargo doc` is clean.
 - [x] Playground: the wasm functions were run under Node through `initSync`, with the page's calls. The page's own DOM code has not been run in a browser.
 - [x] Browser run of the playground page: headless Chrome loaded the page over HTTP, the form handlers ran, and all five panels rendered the expected output (`simplify`, `diff`, `integrate`, `solve`, `latex`).
+
+## Decision log (all open decisions, with the recommendation followed)
+- [x] `x·x⁻¹` default. Recommendation followed: keep `x·x⁻¹ → 1` (assumes `x ≠ 0`), and document it in the README and in `simplify`. Changing it would alter canonical forms everywhere.
+- [x] `serde`. Recommendation followed: not added. The text `uir` codec covers serialisation, and `serde` would be the first dependency with no current consumer.
+- [x] Cubics with three real roots. Recommendation followed: accept the exact complex-radical forms, and check them numerically in the tests. No further simplification.
+- [x] Git dependency on `tpt-mathr-arith` and publishing. Recommendation followed: nothing needs it until a release is planned. Before any release, either wait for the crate on crates.io, or accept the git dependency for that release. Publishing stays excluded.
