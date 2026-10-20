@@ -4,13 +4,11 @@
 //! `numeric_check`: a root must satisfy its equation, and an antiderivative's derivative
 //! must match its integrand. The seeds are fixed, so failures reproduce.
 
-use crate::calculus::{integrate, Integral};
-use crate::numeric_check::{eval, near_zero, poly_at, poly_scale, Lcg, C};
-use crate::parse::parse;
-use crate::solve::{solve, SolveResult};
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
+use tpt_symbolic::calculus::{integrate, Integral};
+mod common;
+use common::{eval, near_zero, poly_at, poly_scale, Lcg, C};
+use tpt_symbolic::parse::parse;
+use tpt_symbolic::solve::{solve, SolveResult};
 
 /// Random polynomial of degree `deg` with small integer coefficients, highest first.
 /// The leading coefficient is non-zero.

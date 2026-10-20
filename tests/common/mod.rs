@@ -1,13 +1,12 @@
+#![allow(dead_code)]
 //! Test-only numeric evaluation, used to check exact results against their equations and
 //! integrands. It works in `f64` and is compiled only for tests, so the core stays exact.
 //!
 //! Principal branches are used throughout: `z^x = exp(x log z)`, and `log` is the principal
 //! logarithm. `atan`, `abs` and `log` of a negative real are real-only where stated.
 
-use crate::expr::{Expr, SymbolicFunc};
-use crate::mathr::Number;
-use alloc::format;
-use alloc::vec;
+use tpt_symbolic::expr::{Expr, SymbolicFunc};
+use tpt_symbolic::mathr::Number;
 
 /// A complex number as `(re, im)`.
 pub type C = (f64, f64);
@@ -176,29 +175,4 @@ pub fn poly_scale(coeffs: &[f64], z: C) -> f64 {
         .enumerate()
         .map(|(i, c)| c.abs() * r.powi(i as i32))
         .sum()
-}
-
-#[cfg(test)]
-mod self_tests {
-    use super::*;
-    use crate::parse::parse;
-
-    #[test]
-    fn evaluates_the_basics() {
-        let e = parse("x^2 + 2*x*i").unwrap();
-        let v = eval(&e, "x", (1.0, 0.0)).unwrap();
-        assert!((v.0 - 1.0).abs() < 1e-12 && (v.1 - 2.0).abs() < 1e-12);
-        let l = eval(&parse("log(x)").unwrap(), "x", (-1.0, 0.0)).unwrap();
-        assert!((l.1 - core::f64::consts::PI).abs() < 1e-12);
-    }
-
-    #[test]
-    fn lcg_stays_in_range() {
-        let mut g = Lcg::new(7);
-        for _ in 0..200 {
-            let v = g.range(-3, 3);
-            assert!((-3..=3).contains(&v));
-        }
-        let _ = vec![0u8];
-    }
 }

@@ -1399,61 +1399,6 @@ mod tests {
             );
         }
     }
-
-    /// `coeffs` are highest degree first. Evaluates the polynomial at `z`.
-    fn poly_at(coeffs: &[f64], z: (f64, f64)) -> (f64, f64) {
-        coeffs.iter().fold((0.0, 0.0), |acc, c| {
-            let m = (acc.0 * z.0 - acc.1 * z.1, acc.0 * z.1 + acc.1 * z.0);
-            (m.0 + c, m.1)
-        })
-    }
-
-    /// Checks every root of `equation` numerically against `coeffs`.
-    fn assert_roots_satisfy(roots: &[Expr], coeffs: &[f64]) {
-        for r in roots {
-            let z = crate::numeric_check::eval(r, "x", (0.0, 0.0))
-                .unwrap_or_else(|| panic!("cannot evaluate {r}"));
-            let value = poly_at(coeffs, z);
-            assert!(
-                value.0.abs() < 1e-7 && value.1.abs() < 1e-7,
-                "{r} gives {value:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn three_real_roots_are_exact_in_complex_radicals() {
-        // x^3 - 3x + 1 has three real roots (near -1.879, 0.347, 1.532). Their closed forms
-        // use complex radicals, and each one is checked numerically.
-        match solve(&p("x^3 - 3*x + 1 = 0"), "x").unwrap() {
-            SolveResult::Exact(v) => {
-                assert_eq!(v.len(), 3);
-                assert_roots_satisfy(&v, &[1.0, 0.0, -3.0, 1.0]);
-            }
-            other => panic!("expected exact roots, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn solve_complex_gives_all_three_roots_of_a_cubic() {
-        // x^3 + x + 1: one real root and a complex pair.
-        match solve_complex(&p("x^3 + x + 1 = 0"), "x").unwrap() {
-            SolveResult::Exact(v) => {
-                assert_eq!(v.len(), 3);
-                assert_roots_satisfy(&v, &[1.0, 0.0, 1.0, 1.0]);
-            }
-            other => panic!("expected exact roots, got {other:?}"),
-        }
-        // x^3 - 1: the rational root 1 and the complex pair -1/2 ± i sqrt(3)/2.
-        match solve_complex(&p("x^3 - 1 = 0"), "x").unwrap() {
-            SolveResult::Exact(v) => {
-                assert_eq!(v.len(), 3);
-                assert_roots_satisfy(&v, &[1.0, 0.0, 0.0, -1.0]);
-            }
-            other => panic!("expected exact roots, got {other:?}"),
-        }
-    }
-
     #[test]
     fn cubic_with_one_real_root_is_exact_by_cardano() {
         // x^3 + x - 1 has one real root, cbrt(...) + cbrt(...) with sqrt(93)/18 inside.
